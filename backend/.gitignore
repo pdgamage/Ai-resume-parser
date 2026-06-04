@@ -1,0 +1,101 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# =========================
+# Environment Variables
+# =========================
+.env
+
+# =========================
+# VS Code
+# =========================
+.vscode/
+
+# =========================
+# PyCharm
+# =========================
+.idea/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# OCR Outputs
+# =========================
+data/ocr/
+
+# OCR JSON files
+*.json
+
+# =========================
+# Generated Images
+# =========================
+images/generated/
+images/temp/
+
+# =========================
+# Model Files
+# =========================
+models/
+models/**/*.pt
+models/**/*.pth
+models/**/*.bin
+models/**/*.ckpt
+models/**/*.h5
+models/**/*.pickle
+models/**/*.pkl
+
+# =========================
+# YOLO Training Results
+# =========================
+runs/
+wandb/
+
+# =========================
+# Output Files
+# =========================
+output/
+output/*
+
+# Keep folder structure
+!output/.gitkeep
+
+# =========================
+# Dataset Files
+# =========================
+data/raw/
+data/train/
+data/val/
+data/test/
+
+# Large PDFs
+*.pdf
+
+# =========================
+# OS Files
+# =========================
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# =========================
+# Build
+# =========================
+build/
+dist/

@@ -1,0 +1,85 @@
+# OS files
+.DS_Store
+Thumbs.db
+Thumbs.db
+desktop.ini
+ehthumbs.db
+Icon\r
+
+# Environment files
+.env
+.env.*
+
+# IDE / editor
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+*.code-workspace
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.ipynb_checkpoints/
+venv/
+.venv/
+env/
+.envrc
+pip-wheel-metadata/
+htmlcov/
+.coverage
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*,cover
+
+# Backend artifacts
+backend/__pycache__/
+backend/*.py[cod]
+backend/*.pyo
+
+# Node / frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.turbo/
+frontend/.next/
+frontend/out/
+frontend/.vite/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/pnpm-debug.log*
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Generated files
+*.log
+*.tmp
+*.swp
+*.lock
+*.DS_Store
+
+# Git
+*.orig
+
+# Misc
+*.bak
+*.tmp
+*.temp
