@@ -1,0 +1,11 @@
+[
+  {
+    "_id": "6a26ef5803495954d210dee9",
+    "name": "HR Manager",
+    "email": "hr@smarthire.com",
+    "password": "$2a$10$B66./4i/9LVUV3mFiHNrte7zLGNV4ljHKCXF2O/q0VbRXBbdEXieC",
+    "role": "hr",
+    "createdAt": "2026-06-08T16:35:36.450Z",
+    "updatedAt": "2026-06-08T16:35:36.451Z"
+  }
+]
