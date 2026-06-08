@@ -1,29 +1,29 @@
-import React, { Component } from 'react';
 import {
   BrowserRouter as Router,
   Routes,
   Route,
   Navigate,
-  Outlet } from
-'react-router-dom';
-import { AuthProvider, useAuth } from './context/AuthContext';
+  Outlet,
+} from "react-router-dom";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 // Components
-import { Sidebar } from './components/Sidebar';
-import { TopNavbar } from './components/TopNavbar';
+import { Sidebar } from "./components/Sidebar";
+import { TopNavbar } from "./components/TopNavbar";
 // Pages
-import { Login } from './pages/Login';
-import { Register } from './pages/Register';
-import { HRDashboard } from './pages/HRDashboard';
-import { CreateJob } from './pages/CreateJob';
-import { JobDetails } from './pages/JobDetails';
-import { ApplicantJobList } from './pages/ApplicantJobList';
-import { ApplyJob } from './pages/ApplyJob';
-import { ShortlistResults } from './pages/ShortlistResults';
+import Login from "./pages/Login";
+import Register from "./pages/Register";
+import { HRDashboard } from "./pages/HRDashboard";
+import { CreateJob } from "./pages/CreateJob";
+import { JobDetails } from "./pages/JobDetails";
+import { ApplicantJobList } from "./pages/ApplicantJobList";
+import { ApplyJob } from "./pages/ApplyJob";
+import { ShortlistResults } from "./pages/ShortlistResults";
+import Landing from "./pages/Landing";
 // Layouts
 const HRLayout = () => {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
-  if (user.role !== 'hr') return <Navigate to="/jobs" replace />;
+  if (user.role !== "hr") return <Navigate to="/jobs" replace />;
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <Sidebar />
@@ -33,32 +33,37 @@ const HRLayout = () => {
           <Outlet />
         </main>
       </div>
-    </div>);
-
+    </div>
+  );
 };
 const ApplicantLayout = () => {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
-  if (user.role !== 'applicant') return <Navigate to="/dashboard" replace />;
+  if (user.role !== "applicant") return <Navigate to="/dashboard" replace />;
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden flex-col">
       <TopNavbar isApplicantView={true} />
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
-    </div>);
-
+    </div>
+  );
 };
 const AuthLayout = () => {
   const { user } = useAuth();
   if (user) {
-    return <Navigate to={user.role === 'hr' ? '/dashboard' : '/jobs'} replace />;
+    return (
+      <Navigate to={user.role === "hr" ? "/dashboard" : "/jobs"} replace />
+    );
   }
   return <Outlet />;
 };
+import { Toaster } from "react-hot-toast";
+
 export function App() {
   return (
     <AuthProvider>
+      <Toaster position="top-right" reverseOrder={false} />
       <Router>
         <Routes>
           {/* Auth Routes */}
@@ -81,11 +86,13 @@ export function App() {
             <Route path="/jobs/:id/apply" element={<ApplyJob />} />
           </Route>
 
-          {/* Default Redirect */}
-          <Route path="/" element={<Navigate to="/login" replace />} />
-          <Route path="*" element={<Navigate to="/login" replace />} />
+          {/* Public Landing Page */}
+          <Route path="/" element={<Landing />} />
+
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Router>
-    </AuthProvider>);
-
+    </AuthProvider>
+  );
 }
