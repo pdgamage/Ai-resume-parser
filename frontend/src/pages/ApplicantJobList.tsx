@@ -1,17 +1,55 @@
-import React, { useState } from 'react';
-import { mockJobs } from '../data/mockData';
+import React, { useState, useEffect } from 'react';
+import { Job } from '../data/mockData';
 import { JobCard } from '../components/JobCard';
 import { SearchIcon, FilterIcon } from 'lucide-react';
+import toast from 'react-hot-toast';
+
 export function ApplicantJobList() {
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    const fetchJobs = async () => {
+      try {
+        const token = localStorage.getItem("smarthire_token");
+        const res = await fetch("/api/jobs", {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        if (!res.ok) {
+          throw new Error("Failed to fetch jobs");
+        }
+        const data = await res.json();
+        setJobs(data);
+      } catch (err: any) {
+        console.error(err);
+        toast.error("Failed to load jobs");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchJobs();
+  }, []);
+
   // Only show open jobs to applicants
-  const openJobs = mockJobs.filter((job) => job.status === 'Open');
+  const openJobs = jobs.filter((job) => job.status === 'Open');
   const filteredJobs = openJobs.filter((job) => {
     const matchesSearch =
     job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
     job.skills.some((s) => s.toLowerCase().includes(searchTerm.toLowerCase()));
     return matchesSearch;
   });
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans">
+        <div className="w-12 h-12 border-4 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin mb-4" />
+        <span className="text-sm font-medium text-slate-500">Loading jobs...</span>
+      </div>
+    );
+  }
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-8 text-center max-w-2xl mx-auto">

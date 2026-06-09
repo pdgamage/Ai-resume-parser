@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User from "./models/User.js";
+import Job from "./models/Job.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -16,12 +17,13 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 5050;
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/smarthire";
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://pasindu1028:Pasindu1!@cluster0.awofywi.mongodb.net/cv";
 const JWT_SECRET = process.env.JWT_SECRET || "smarthire_jwt_secret_token_key_123";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DB_FILE = path.join(__dirname, "users.json");
+const JOBS_FILE = path.join(__dirname, "jobs.json");
 
 let useLocalDb = false;
 
@@ -41,17 +43,34 @@ function writeUsers(users) {
   fs.writeFileSync(DB_FILE, JSON.stringify(users, null, 2), "utf-8");
 }
 
+function readJobs() {
+  if (!fs.existsSync(JOBS_FILE)) {
+    return [];
+  }
+  try {
+    return JSON.parse(fs.readFileSync(JOBS_FILE, "utf-8"));
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeJobs(jobs) {
+  fs.writeFileSync(JOBS_FILE, JSON.stringify(jobs, null, 2), "utf-8");
+}
+
 // MongoDB Connection with timeout
 mongoose
   .connect(MONGODB_URI, { serverSelectionTimeoutMS: 2000 })
   .then(async () => {
     console.log("Connected to MongoDB successfully");
     await seedHR();
+    await seedJobs();
   })
   .catch(async (err) => {
     console.warn("\n⚠️ MongoDB connection failed. Falling back to local file database (users.json)!");
     useLocalDb = true;
     await seedHRLocal();
+    seedJobsLocal();
   });
 
 // Seed default HR account (MongoDB)
@@ -104,6 +123,95 @@ async function seedHRLocal() {
     }
   } catch (error) {
     console.error("Error seeding HR account locally:", error);
+  }
+}
+
+// Initial Mock Jobs Data for Seeding
+const initialJobs = [
+  {
+    _id: "j1",
+    title: "Software Engineer",
+    description: "We are looking for a skilled Software Engineer to join our core development team. You will be responsible for building scalable web applications and collaborating with cross-functional teams.",
+    skills: ["React", "Node.js", "TypeScript", "SQL"],
+    minEducation: "Bachelor's Degree",
+    minExperience: 2,
+    closingDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    status: "Open",
+    cvCount: 12
+  },
+  {
+    _id: "j2",
+    title: "Marketing Executive",
+    description: "Join our dynamic marketing team to drive brand awareness and execute digital campaigns across various platforms.",
+    skills: ["Digital Marketing", "SEO", "Content Creation", "Communication"],
+    minEducation: "Diploma",
+    minExperience: 1,
+    closingDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+    status: "Open",
+    cvCount: 8
+  },
+  {
+    _id: "j3",
+    title: "Accounts Officer",
+    description: "Seeking a detail-oriented Accounts Officer to manage daily financial transactions, payroll, and reporting.",
+    skills: ["Excel", "Accounting", "QuickBooks", "Attention to Detail"],
+    minEducation: "Bachelor's Degree",
+    minExperience: 3,
+    closingDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    status: "Processing",
+    cvCount: 24
+  },
+  {
+    _id: "j4",
+    title: "Data Analyst",
+    description: "Looking for a Data Analyst to interpret data and turn it into information which can offer ways to improve a business.",
+    skills: ["Python", "SQL", "Tableau", "Statistics"],
+    minEducation: "Bachelor's Degree",
+    minExperience: 2,
+    closingDate: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
+    status: "Completed",
+    cvCount: 45
+  },
+  {
+    _id: "j5",
+    title: "HR Coordinator",
+    description: "We need an HR Coordinator to facilitate daily HR functions like keeping track of employees records and supporting the interview process.",
+    skills: ["Communication", "Teamwork", "MS Office", "Organization"],
+    minEducation: "Diploma",
+    minExperience: 1,
+    closingDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    status: "Open",
+    cvCount: 3
+  }
+];
+
+async function seedJobs() {
+  try {
+    const jobCount = await Job.countDocuments();
+    if (jobCount === 0) {
+      console.log("No jobs found in MongoDB. Seeding initial jobs...");
+      await Job.insertMany(initialJobs);
+      console.log("Initial jobs seeded successfully!");
+    } else {
+      console.log("Jobs already exist in MongoDB. Seeding skipped.");
+    }
+  } catch (error) {
+    console.error("Error seeding jobs:", error);
+  }
+}
+
+function seedJobsLocal() {
+  try {
+    const jobs = readJobs();
+    if (jobs.length === 0) {
+      console.log("No jobs found in local DB. Seeding initial jobs...");
+      writeJobs(initialJobs);
+      console.log("Initial jobs seeded successfully in local DB!");
+    } else {
+      console.log("Jobs already exist in local DB. Seeding skipped.");
+    }
+  } catch (error) {
+    console.error("Error seeding jobs locally:", error);
   }
 }
 
@@ -255,6 +363,89 @@ app.get("/api/auth/me", authMiddleware, async (req, res) => {
   } catch (error) {
     console.error("Profile fetch error:", error);
     res.status(500).json({ message: "Server error fetching user profile" });
+  }
+});
+
+// Job API Routes
+app.get("/api/jobs", authMiddleware, async (req, res) => {
+  try {
+    if (useLocalDb) {
+      const jobs = readJobs();
+      const mapped = jobs.map((j) => ({ ...j, id: j._id }));
+      return res.json(mapped);
+    }
+    const jobs = await Job.find({});
+    const mapped = jobs.map((j) => {
+      const obj = j.toObject();
+      obj.id = obj._id;
+      return obj;
+    });
+    res.json(mapped);
+  } catch (error) {
+    console.error("Fetch jobs error:", error);
+    res.status(500).json({ message: "Server error fetching jobs" });
+  }
+});
+
+app.get("/api/jobs/:id", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (useLocalDb) {
+      const jobs = readJobs();
+      const job = jobs.find((j) => j._id === id);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+      return res.json({ ...job, id: job._id });
+    }
+    const job = await Job.findById(id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    const obj = job.toObject();
+    obj.id = obj._id;
+    res.json(obj);
+  } catch (error) {
+    console.error("Fetch job detail error:", error);
+    res.status(500).json({ message: "Server error fetching job details" });
+  }
+});
+
+app.post("/api/jobs", authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== "hr") {
+      return res.status(403).json({ message: "Access denied. Only HR can create jobs." });
+    }
+    const { title, description, skills, minEducation, minExperience, closingDate } = req.body;
+    if (!title || !description || !minEducation || minExperience === undefined || !closingDate) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+    const jobData = {
+      title,
+      description,
+      skills: skills || [],
+      minEducation,
+      minExperience: Number(minExperience),
+      closingDate,
+      status: "Open",
+      cvCount: 0,
+    };
+    if (useLocalDb) {
+      const jobs = readJobs();
+      const newJob = {
+        _id: new mongoose.Types.ObjectId().toString(),
+        ...jobData,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      jobs.push(newJob);
+      writeJobs(jobs);
+      return res.status(201).json({ ...newJob, id: newJob._id });
+    }
+    const newJob = new Job(jobData);
+    await newJob.save();
+    const obj = newJob.toObject();
+    obj.id = obj._id;
+    res.status(201).json(obj);
+  } catch (error) {
+    console.error("Create job error:", error);
+    res.status(500).json({ message: "Server error creating job" });
   }
 });
 

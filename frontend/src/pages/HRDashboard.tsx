@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
   BriefcaseIcon,
@@ -9,25 +9,63 @@ import {
   PlusIcon,
   FilterIcon } from
 'lucide-react';
-import { mockJobs, JobStatus } from '../data/mockData';
+import { Job, JobStatus } from '../data/mockData';
 import { JobCard } from '../components/JobCard';
 import { SummaryStatCard } from '../components/SummaryStatCard';
+import toast from 'react-hot-toast';
+
 export function HRDashboard() {
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<JobStatus | 'All'>('All');
-  const filteredJobs = mockJobs.filter((job) => {
+
+  useEffect(() => {
+    const fetchJobs = async () => {
+      try {
+        const token = localStorage.getItem("smarthire_token");
+        const res = await fetch("/api/jobs", {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        if (!res.ok) {
+          throw new Error("Failed to fetch jobs");
+        }
+        const data = await res.json();
+        setJobs(data);
+      } catch (err: any) {
+        console.error(err);
+        toast.error("Failed to load jobs from database");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchJobs();
+  }, []);
+
+  const filteredJobs = jobs.filter((job) => {
     const matchesSearch = job.title.
     toLowerCase().
     includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'All' || job.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-  const totalJobs = mockJobs.length;
-  const openJobs = mockJobs.filter((j) => j.status === 'Open').length;
-  const totalCVs = mockJobs.reduce((acc, job) => acc + job.cvCount, 0);
-  const shortlistedJobs = mockJobs.filter(
+  const totalJobs = jobs.length;
+  const openJobs = jobs.filter((j) => j.status === 'Open').length;
+  const totalCVs = jobs.reduce((acc, job) => acc + job.cvCount, 0);
+  const shortlistedJobs = jobs.filter(
     (j) => j.status === 'Completed'
   ).length;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans">
+        <div className="w-12 h-12 border-4 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin mb-4" />
+        <span className="text-sm font-medium text-slate-500">Loading Dashboard...</span>
+      </div>
+    );
+  }
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
