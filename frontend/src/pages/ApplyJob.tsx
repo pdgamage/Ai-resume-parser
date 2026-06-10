@@ -1,7 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { mockJobs } from '../data/mockData';
+import { Job, mockJobs } from '../data/mockData';
 import { SkillTag } from '../components/SkillTag';
+import toast from 'react-hot-toast';
 import {
   ArrowLeftIcon,
   UploadCloudIcon,
@@ -19,7 +20,43 @@ export function ApplyJob() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState('');
-  const job = mockJobs.find((j) => j.id === id) || mockJobs[0];
+  const [job, setJob] = useState<Job | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchJob = async () => {
+      try {
+        const token = localStorage.getItem("smarthire_token");
+        const res = await fetch(`/api/jobs/${id}`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        if (!res.ok) {
+          throw new Error("Job not found");
+        }
+        const data = await res.json();
+        setJob(data);
+      } catch (err: any) {
+        console.error(err);
+        toast.error("Failed to load job details");
+        navigate("/jobs");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchJob();
+  }, [id, navigate]);
+
+  if (loading || !job) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans">
+        <div className="w-12 h-12 border-4 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin mb-4" />
+        <span className="text-sm font-medium text-slate-500">Loading Job details...</span>
+      </div>
+    );
+  }
+
   const isClosed =
   new Date(job.closingDate) < new Date() || job.status !== 'Open';
   const handleDragOver = (e: React.DragEvent) => {

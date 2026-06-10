@@ -1,13 +1,50 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { mockJobs, mockResults } from '../data/mockData';
+import { Job, mockJobs, mockResults } from '../data/mockData';
 import { FairnessPanel } from '../components/FairnessPanel';
 import { CandidateResultCard } from '../components/CandidateResultCard';
 import { ArrowLeftIcon, DownloadIcon, UsersIcon } from 'lucide-react';
+import toast from 'react-hot-toast';
 export function ShortlistResults() {
   const { jobId } = useParams();
   const navigate = useNavigate();
-  const job = mockJobs.find((j) => j.id === jobId) || mockJobs[0];
+  const [job, setJob] = useState<Job | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchJob = async () => {
+      try {
+        const token = localStorage.getItem("smarthire_token");
+        const res = await fetch(`/api/jobs/${jobId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        if (!res.ok) {
+          throw new Error("Job not found");
+        }
+        const data = await res.json();
+        setJob(data);
+      } catch (err: any) {
+        console.error(err);
+        toast.error("Failed to load job details");
+        navigate("/dashboard");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchJob();
+  }, [jobId, navigate]);
+
+  if (loading || !job) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans">
+        <div className="w-12 h-12 border-4 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin mb-4" />
+        <span className="text-sm font-medium text-slate-500">Loading Results...</span>
+      </div>
+    );
+  }
+
   const results = mockResults.
   filter((r) => r.jobId === job.id).
   sort((a, b) => a.rank - b.rank);

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import { SkillTag } from '../components/SkillTag';
 import {
   BriefcaseIcon,
@@ -24,14 +25,47 @@ export function CreateJob() {
   const removeSkill = (skillToRemove: string) => {
     setSkills(skills.filter((skill) => skill !== skillToRemove));
   };
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    // Simulate API call
-    setTimeout(() => {
-      setIsSubmitting(false);
+    try {
+      const form = e.currentTarget as HTMLFormElement;
+      const title = (form.querySelector('#title') as HTMLInputElement).value;
+      const description = (form.querySelector('#description') as HTMLTextAreaElement).value;
+      const minEducation = (form.querySelector('#education') as HTMLSelectElement).value;
+      const minExperience = parseInt((form.querySelector('#experience') as HTMLInputElement).value, 10);
+      const closingDate = (form.querySelector('#closingDate') as HTMLInputElement).value;
+
+      const token = localStorage.getItem("smarthire_token");
+      const response = await fetch("/api/jobs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title,
+          description,
+          skills,
+          minEducation,
+          minExperience,
+          closingDate,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to create job post");
+      }
+
+      toast.success("Job post created successfully!");
       navigate('/dashboard');
-    }, 1000);
+    } catch (err: any) {
+      console.error("Create job error:", err);
+      toast.error(err.message || "Failed to create job post. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
   return (
     <div className="p-6 max-w-4xl mx-auto">
