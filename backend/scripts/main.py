@@ -13,7 +13,12 @@ from cv_postprocess import merge_and_extract, save_json
 # CONFIG
 # ==============================
 
-BASE_PATH = r"D:\project\cv_parser_project"
+# Derive BASE_PATH dynamically relative to this script's directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_PATH = os.path.dirname(SCRIPT_DIR)  # up to 'backend'
+
+# Choose between "BERT" or "SPACY" for entity extraction
+NER_ENGINE = "BERT"
 
 PATHS = {
     "pdf":        os.path.join(BASE_PATH, "data"),
@@ -23,7 +28,9 @@ PATHS = {
     "sections":   os.path.join(BASE_PATH, "output", "sections"),
     "entities":   os.path.join(BASE_PATH, "output", "entities"),
     "yolo_model": os.path.join(BASE_PATH, "models", "best.pt"),
-    "ner_model":  os.path.join(BASE_PATH, "models", "model-best"),
+    "spacy_model": os.path.join(BASE_PATH, "models", "model-best"),
+    "bert_model": os.path.join(BASE_PATH, "models", "bert", "model.bin"),
+    "bert_meta":  os.path.join(BASE_PATH, "models", "bert", "meta.bin"),
 }
 
 # ==============================
@@ -227,21 +234,27 @@ def is_valid_name(text):
 def extract_name_from_profile(text, nlp):
     """
     Strategy (in priority order):
-      1. spaCy NER label == NAME  →  highest confidence
+      1. BERT / spaCy NER label == NAME  →  highest confidence
       2. First capitalised 2-word token in the first 200 chars
          (names almost always appear at the top of the Profile section)
       3. Returns None if nothing passes validation
     """
-    doc = nlp(text)
+    if hasattr(nlp, "extract_entities"):
+        # BERT NER
+        bert_ents = nlp.extract_entities(text)
+        names = bert_ents.get("NAME", [])
+        for name in names:
+            if is_valid_name(name):
+                return apply_name_corrections(name)
+    else:
+        # spaCy NER
+        doc = nlp(text)
+        for ent in doc.ents:
+            if ent.label_ == "NAME" and is_valid_name(ent.text):
+                return apply_name_corrections(ent.text)
 
-    # 1. Prefer the model's own NAME entity
-    for ent in doc.ents:
-        if ent.label_ == "NAME" and is_valid_name(ent.text):
-            return apply_name_corrections(ent.text)
-
-    # 2. Heuristic: scan first 200 characters for a title-cased phrase
+    # 2. Heuristic fallback: scan first 200 characters for a title-cased phrase
     snippet = text[:200]
-    # Match runs of 2–4 title-case words
     candidates = re.findall(
         r"\b([A-Z][a-z]+(?:\s[A-Z][a-z]+){1,3})\b", snippet
     )
@@ -260,7 +273,7 @@ def extract_skills_from_text(text, nlp):
     Two-pass skill extraction:
       Pass 1 — dictionary lookup on lowercased text
                (catches multi-word skills like "machine learning")
-      Pass 2 — spaCy NER for SKILL entities not in the dictionary
+      Pass 2 — BERT/spaCy NER for SKILL entities not in the dictionary
     Returns a deduplicated, title-cased list.
     """
     found = set()
@@ -268,18 +281,24 @@ def extract_skills_from_text(text, nlp):
 
     # Pass 1: dictionary
     for skill in SKILL_DICTIONARY:
-        # Use word-boundary regex for accurate matching
         pattern = r"\b" + re.escape(skill) + r"\b"
         if re.search(pattern, lower):
             found.add(skill.title())
 
-    # Pass 2: spaCy NER
-    doc = nlp(text)
-    for ent in doc.ents:
-        if ent.label_ == "SKILL":
-            normalised = ent.text.strip().lower()
-            if len(normalised) > 1:          # skip single-char noise
-                found.add(ent.text.strip().title())
+    # Pass 2: BERT / spaCy NER
+    if hasattr(nlp, "extract_entities"):
+        bert_ents = nlp.extract_entities(text)
+        for skill in bert_ents.get("SKILL", []):
+            normalised = skill.strip().lower()
+            if len(normalised) > 1:
+                found.add(skill.strip().title())
+    else:
+        doc = nlp(text)
+        for ent in doc.ents:
+            if ent.label_ == "SKILL":
+                normalised = ent.text.strip().lower()
+                if len(normalised) > 1:
+                    found.add(ent.text.strip().title())
 
     return sorted(found)
 
@@ -442,50 +461,96 @@ def extract_entities(sections, nlp):
 
         # Apply OCR corrections before NER
         text = apply_ocr_corrections(raw_text)
-        doc  = nlp(text)
 
-        # --- PROFILE ---
-        if section == "Profile":
-            # Name: use improved extractor
-            if final["NAME"] is None:
-                name = extract_name_from_profile(text, nlp)
-                if name:
-                    final["NAME"] = name
+        # Handle BERT NER vs spaCy NER
+        if hasattr(nlp, "extract_entities"):
+            bert_ents = nlp.extract_entities(text)
 
-            for ent in doc.ents:
-                if ent.label_ == "LOCATION" and final["LOCATION"] is None:
-                    final["LOCATION"] = ent.text.strip()
+            # --- PROFILE ---
+            if section == "Profile":
+                if final["NAME"] is None:
+                    name = extract_name_from_profile(text, nlp)
+                    if name:
+                        final["NAME"] = name
 
-        # --- SKILLS ---
-        elif section == "Skills":
-            skills = extract_skills_from_text(text, nlp)
-            final["SKILLS"].extend(skills)
+                locations = bert_ents.get("LOCATION", [])
+                if locations and final["LOCATION"] is None:
+                    final["LOCATION"] = locations[0].strip()
 
-        # --- EDUCATION ---
-        elif section == "Education":
-            for ent in doc.ents:
-                if ent.label_ in ("DEGREE", "COLLEGE", "DATE"):
-                    val = apply_title_corrections(ent.text.strip())
-                    if is_valid_education(val):
-                        final["EDUCATION"].append(val)
+            # --- SKILLS ---
+            elif section == "Skills":
+                skills = extract_skills_from_text(text, nlp)
+                final["SKILLS"].extend(skills)
 
-        # --- EXPERIENCE ---
-        elif section in ("Experience", "Work Experience"):
-            for ent in doc.ents:
-                if ent.label_ == "COMPANY":
-                    val = ent.text.strip()
-                    if is_valid_company(val):
-                        final["COMPANY"].append(val)
-                elif ent.label_ == "ROLE":
-                    val = apply_title_corrections(ent.text.strip())
-                    if is_valid_role(val):
-                        final["ROLE"].append(val)
+            # --- EDUCATION ---
+            elif section == "Education":
+                for label in ("DEGREE", "COLLEGE", "DATE"):
+                    for val in bert_ents.get(label, []):
+                        val_corr = apply_title_corrections(val.strip())
+                        if is_valid_education(val_corr):
+                            final["EDUCATION"].append(val_corr)
 
-        # --- PROJECTS ---
-        elif section == "Projects":
-            stripped = text.strip()
-            if stripped:
-                final["PROJECTS"].append(stripped)
+            # --- EXPERIENCE ---
+            elif section in ("Experience", "Work Experience"):
+                for company in bert_ents.get("COMPANY", []):
+                    if is_valid_company(company.strip()):
+                        final["COMPANY"].append(company.strip())
+                for role in bert_ents.get("ROLE", []):
+                    role_corr = apply_title_corrections(role.strip())
+                    if is_valid_role(role_corr):
+                        final["ROLE"].append(role_corr)
+
+            # --- PROJECTS ---
+            elif section == "Projects":
+                stripped = text.strip()
+                if stripped:
+                    final["PROJECTS"].append(stripped)
+        else:
+            # spaCy NER
+            doc  = nlp(text)
+
+            # --- PROFILE ---
+            if section == "Profile":
+                # Name: use improved extractor
+                if final["NAME"] is None:
+                    name = extract_name_from_profile(text, nlp)
+                    if name:
+                        final["NAME"] = name
+
+                for ent in doc.ents:
+                    if ent.label_ == "LOCATION" and final["LOCATION"] is None:
+                        final["LOCATION"] = ent.text.strip()
+
+            # --- SKILLS ---
+            elif section == "Skills":
+                skills = extract_skills_from_text(text, nlp)
+                final["SKILLS"].extend(skills)
+
+            # --- EDUCATION ---
+            elif section == "Education":
+                for ent in doc.ents:
+                    if ent.label_ in ("DEGREE", "COLLEGE", "DATE"):
+                        val = apply_title_corrections(ent.text.strip())
+                        if is_valid_education(val):
+                            final["EDUCATION"].append(val)
+
+            # --- EXPERIENCE ---
+            elif section in ("Experience", "Work Experience"):
+                for ent in doc.ents:
+                    if ent.label_ == "COMPANY":
+                        val = ent.text.strip()
+                        if is_valid_company(val):
+                            final["COMPANY"].append(val)
+                    elif ent.label_ == "ROLE":
+                        val = apply_title_corrections(ent.text.strip())
+                        if is_valid_role(val):
+                            final["ROLE"].append(val)
+
+            # --- PROJECTS ---
+            elif section == "Projects":
+                stripped = text.strip()
+                if stripped:
+                    final["PROJECTS"].append(stripped)
 
     # -------------------------
     # ✅ Clean final JSON
@@ -524,7 +589,14 @@ def main():
     # -------------------------
     yolo = YOLO(PATHS["yolo_model"])
     ocr  = PaddleOCR(use_textline_orientation=True, lang="en")
-    nlp  = spacy.load(PATHS["ner_model"])
+    
+    if NER_ENGINE == "BERT":
+        print(" Loading BERT NER model...")
+        from bert_ner import BertNER
+        nlp = BertNER(PATHS["bert_model"], PATHS["bert_meta"])
+    else:
+        print("spacy Loading spaCy NER model...")
+        nlp = spacy.load(PATHS["spacy_model"])
 
     # -------------------------
     # Process PDFs

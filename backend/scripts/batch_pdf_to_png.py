@@ -1,8 +1,10 @@
 import os
 from pdf2image import convert_from_path
 
-DATA_FOLDER = "D:\project\cv_parser_project\data"
-OUTPUT_FOLDER = "D:\project\cv_parser_project\images"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_PATH = os.path.dirname(SCRIPT_DIR)
+DATA_FOLDER = os.path.join(BASE_PATH, "data")
+OUTPUT_FOLDER = os.path.join(BASE_PATH, "images")
 
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
