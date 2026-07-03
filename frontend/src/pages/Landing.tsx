@@ -160,14 +160,14 @@ export default function LandingPage() {
             <div className="inline-flex items-center gap-2 bg-white/10 border border-white/20 rounded-full px-3.5 py-1.5 mb-6">
               <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
               <span className="text-xs font-medium text-white/85">
-                2,400+ new jobs posted today
+                newest jobs posted today
               </span>
             </div>
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-extrabold text-white leading-tight mb-5">
               Find Your <span className="bg-gradient-to-r from-indigo-200 to-blue-200 bg-clip-text text-transparent">Dream Career</span> With Confidence
             </h1>
             <p className="text-base md:text-lg text-white/70 leading-relaxed mb-9 max-w-lg mx-auto lg:mx-0">
-              Connect with 48,000+ top companies worldwide. SmartHire's smart
+              SmartHire's smart
               matching technology finds roles that fit not just your skills, but
               your ambitions.
             </p>
@@ -210,7 +210,7 @@ export default function LandingPage() {
                 <div>
                   <div className="font-bold text-sm text-slate-900">Senior UI/UX Designer</div>
                   <div className="text-xs text-slate-400">
-                    Stripe · San Francisco
+                    Colombo · Sri Lanka
                   </div>
                 </div>
               </div>
@@ -220,7 +220,7 @@ export default function LandingPage() {
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-purple-600">Full-time</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="font-bold text-sm text-slate-900">Rs140K – Rs180K</span>
+                <span className="font-bold text-sm text-slate-900">LKR 140K – LKR 180K</span>
                 <button
                   onClick={() => navigate("/register")}
                   className="text-xs font-semibold px-3.5 py-1.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition-colors"
@@ -238,7 +238,7 @@ export default function LandingPage() {
                 </div>
                 <div>
                   <div className="font-bold text-sm text-slate-900">Project Manager</div>
-                  <div className="text-xs text-slate-400">Shopify · Toronto</div>
+                  <div className="text-xs text-slate-400">Galle · Sri Lanka</div>
                 </div>
               </div>
               <div className="flex gap-1.5 flex-wrap mb-3">
@@ -247,7 +247,7 @@ export default function LandingPage() {
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-purple-600">Leadership</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="font-bold text-sm text-slate-900">Rs160K – Rs200K</span>
+                <span className="font-bold text-sm text-slate-900">LKR 160K – LKR 200K</span>
                 <button
                   onClick={() => navigate("/register")}
                   className="text-xs font-semibold px-3.5 py-1.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition-colors"
