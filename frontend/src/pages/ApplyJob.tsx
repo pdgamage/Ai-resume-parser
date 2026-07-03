@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Job, mockJobs } from '../data/mockData';
+import { Job } from '../data/mockData';
 import { SkillTag } from '../components/SkillTag';
 import toast from 'react-hot-toast';
 import {
@@ -9,6 +9,7 @@ import {
   FileIcon,
   CheckCircleIcon,
   AlertCircleIcon,
+  InfoIcon,
   XIcon } from
 'lucide-react';
 export function ApplyJob() {
@@ -22,6 +23,7 @@ export function ApplyJob() {
   const [error, setError] = useState('');
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
     const fetchJob = async () => {
@@ -99,17 +101,40 @@ export function ApplyJob() {
       }
     }
   };
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!file) {
       setError('Please upload your CV first');
       return;
     }
     setIsSubmitting(true);
-    // Simulate upload
-    setTimeout(() => {
-      setIsSubmitting(false);
+    setError('');
+    try {
+      const token = localStorage.getItem("smarthire_token");
+      const formData = new FormData();
+      formData.append("cv", file);
+      
+      const res = await fetch(`/api/jobs/${id}/apply`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`
+        },
+        body: formData
+      });
+      
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Failed to submit application");
+      }
+      
       setIsSuccess(true);
-    }, 1500);
+      toast.success("Application submitted successfully!");
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Something went wrong. Please try again.");
+      toast.error(err.message || "Failed to submit application");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
   if (isSuccess) {
     return (
@@ -148,15 +173,54 @@ export function ApplyJob() {
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
         <div className="p-6 border-b border-slate-200 bg-slate-50/50">
-          <h1 className="text-2xl font-bold text-slate-900 mb-2">
-            Apply for {job.title}
-          </h1>
-          <div className="flex flex-wrap gap-2 mt-3">
-            {job.skills.map((skill) =>
-            <SkillTag key={skill} skill={skill} />
-            )}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900 mb-2">
+                Apply for {job.title}
+              </h1>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {job.skills.map((skill) =>
+                <SkillTag key={skill} skill={skill} />
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setShowDetails(!showDetails)}
+              className="flex items-center gap-2 px-4 py-2 border border-indigo-200 text-indigo-600 bg-indigo-50/50 hover:bg-indigo-50 hover:text-indigo-700 rounded-lg text-sm font-medium transition-colors shadow-sm self-start sm:self-center">
+              <InfoIcon className="w-4 h-4" />
+              {showDetails ? 'Hide Job Details' : 'View Job Details'}
+            </button>
           </div>
         </div>
+
+        {showDetails && (
+          <div className="p-6 border-b border-slate-200 bg-white transition-all">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+              Job Description
+            </h3>
+            <p className="text-slate-600 text-sm mb-6 whitespace-pre-line leading-relaxed">
+              {job.description}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-slate-100">
+              <div>
+                <span className="text-xs font-semibold text-slate-400 block mb-1">
+                  Required Education
+                </span>
+                <span className="text-sm text-slate-800 font-medium">
+                  {job.minEducation}
+                </span>
+              </div>
+              <div>
+                <span className="text-xs font-semibold text-slate-400 block mb-1">
+                  Minimum Experience
+                </span>
+                <span className="text-sm text-slate-800 font-medium">
+                  {job.minExperience} {job.minExperience === 1 ? 'Year' : 'Years'}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="p-6 sm:p-8">
           <h3 className="text-lg font-semibold text-slate-900 mb-4">
