@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Job, mockJobs, mockResults } from '../data/mockData';
+import { Job, mockResults } from '../data/mockData';
 import { FairnessPanel } from '../components/FairnessPanel';
 import { CandidateResultCard } from '../components/CandidateResultCard';
 import { ArrowLeftIcon, DownloadIcon, UsersIcon } from 'lucide-react';
@@ -10,9 +10,10 @@ export function ShortlistResults() {
   const navigate = useNavigate();
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
+  const [jobCVs, setJobCVs] = useState<any[]>([]);
 
   useEffect(() => {
-    const fetchJob = async () => {
+    const fetchJobAndApplications = async () => {
       try {
         const token = localStorage.getItem("smarthire_token");
         const res = await fetch(`/api/jobs/${jobId}`, {
@@ -25,6 +26,17 @@ export function ShortlistResults() {
         }
         const data = await res.json();
         setJob(data);
+
+        // Fetch applications from the database
+        const appsRes = await fetch(`/api/jobs/${jobId}/applications`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        if (appsRes.ok) {
+          const appsData = await appsRes.json();
+          setJobCVs(appsData);
+        }
       } catch (err: any) {
         console.error(err);
         toast.error("Failed to load job details");
@@ -33,7 +45,7 @@ export function ShortlistResults() {
         setLoading(false);
       }
     };
-    fetchJob();
+    fetchJobAndApplications();
   }, [jobId, navigate]);
 
   if (loading || !job) {
@@ -45,9 +57,35 @@ export function ShortlistResults() {
     );
   }
 
-  const results = mockResults.
-  filter((r) => r.jobId === job.id).
-  sort((a, b) => a.rank - b.rank);
+  const results = [...jobCVs]
+    .map((cv) => {
+      if (cv.matchScore !== undefined) {
+        return {
+          id: cv._id || cv.id,
+          jobId: cv.jobId,
+          applicantId: cv.applicantId,
+          applicantName: cv.applicantName,
+          matchScore: cv.matchScore,
+          skillsMatched: cv.skillsMatched || [],
+          educationMatch: cv.educationMatch || "-",
+          experienceMatch: cv.experienceMatch || "-",
+          explanation: cv.explanation || "",
+          isRecommended: cv.isRecommended ?? (cv.matchScore >= 70),
+        };
+      }
+      return null;
+    })
+    .filter((r) => r !== null)
+    .concat(
+      mockResults.filter(
+        (r) => r.jobId === job.id && !jobCVs.some((cv) => cv.applicantId === r.applicantId)
+      )
+    )
+    .sort((a, b) => b.matchScore - a.matchScore)
+    .map((r, index) => ({
+      ...r,
+      rank: index + 1
+    }));
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <button
