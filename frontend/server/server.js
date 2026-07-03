@@ -6,9 +6,14 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User from "./models/User.js";
 import Job from "./models/Job.js";
+import Application from "./models/Application.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import multer from "multer";
+import { v2 as cloudinary } from "cloudinary";
+import https from "https";
+import { spawn } from "child_process";
 
 dotenv.config();
 
@@ -24,6 +29,127 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DB_FILE = path.join(__dirname, "users.json");
 const JOBS_FILE = path.join(__dirname, "jobs.json");
+const APPLICATIONS_FILE = path.join(__dirname, "applications.json");
+
+function readApplications() {
+  if (!fs.existsSync(APPLICATIONS_FILE)) {
+    return [];
+  }
+  try {
+    return JSON.parse(fs.readFileSync(APPLICATIONS_FILE, "utf-8"));
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeApplications(applications) {
+  fs.writeFileSync(APPLICATIONS_FILE, JSON.stringify(applications, null, 2), "utf-8");
+}
+
+// Configure Cloudinary if credentials are provided in env
+if (process.env.CLOUDINARY_CLOUD_NAME) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+}
+
+// Ensure local uploads directory exists
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// Write dummy mock files so they exist
+const createDummyMockFile = (name) => {
+  const filePath = path.join(uploadDir, name);
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, "Mock Resume Content. This is a dummy CV for testing purposes.", "utf-8");
+  }
+};
+createDummyMockFile("mock_cv1.pdf");
+createDummyMockFile("mock_cv2.pdf");
+createDummyMockFile("mock_cv3.pdf");
+
+// Multer memory storage config
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    const validTypes = ["application/pdf", "image/jpeg", "image/png"];
+    if (validTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only PDF, JPEG, and PNG files are allowed."));
+    }
+  }
+});
+
+// Mock applications to seed
+const initialApplications = [
+  {
+    _id: "cv1",
+    jobId: "j3",
+    applicantId: "a1",
+    applicantName: "Kasun Perera",
+    fileName: "Kasun_Perera_CV.pdf",
+    cvUrl: "/api/uploads/mock_cv1.pdf",
+    status: "Pending",
+    createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    _id: "cv2",
+    jobId: "j3",
+    applicantId: "a2",
+    applicantName: "Amandi Silva",
+    fileName: "Amandi_Resume_2023.pdf",
+    cvUrl: "/api/uploads/mock_cv2.pdf",
+    status: "Pending",
+    createdAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    _id: "cv3",
+    jobId: "j3",
+    applicantId: "a3",
+    applicantName: "Nuwan Fernando",
+    fileName: "NuwanF_CV.pdf",
+    cvUrl: "/api/uploads/mock_cv3.pdf",
+    status: "Pending",
+    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+  }
+];
+
+// Seed default applications (MongoDB)
+async function seedApplications() {
+  try {
+    const appCount = await Application.countDocuments();
+    if (appCount === 0) {
+      console.log("No applications found in MongoDB. Seeding initial applications...");
+      await Application.insertMany(initialApplications);
+      console.log("Initial applications seeded successfully!");
+    }
+  } catch (error) {
+    console.error("Error seeding applications:", error);
+  }
+}
+
+// Seed default applications (Local JSON)
+function seedApplicationsLocal() {
+  try {
+    const apps = readApplications();
+    if (apps.length === 0) {
+      console.log("No applications found in local DB. Seeding initial applications...");
+      writeApplications(initialApplications);
+      console.log("Initial applications seeded successfully in local DB!");
+    }
+  } catch (error) {
+    console.error("Error seeding applications locally:", error);
+  }
+}
 
 let useLocalDb = false;
 
@@ -65,12 +191,14 @@ mongoose
     console.log("Connected to MongoDB successfully");
     await seedHR();
     await seedJobs();
+    await seedApplications();
   })
   .catch(async (err) => {
     console.warn("\n⚠️ MongoDB connection failed. Falling back to local file database (users.json)!");
     useLocalDb = true;
     await seedHRLocal();
     seedJobsLocal();
+    seedApplicationsLocal();
   });
 
 // Seed default HR account (MongoDB)
@@ -446,6 +574,632 @@ app.post("/api/jobs", authMiddleware, async (req, res) => {
   } catch (error) {
     console.error("Create job error:", error);
     res.status(500).json({ message: "Server error creating job" });
+  }
+});
+
+// Serve local uploads statically
+app.use("/api/uploads", express.static(uploadDir));
+
+// Apply to a job (File Upload to Cloudinary or Local Fallback)
+app.post("/api/jobs/:id/apply", authMiddleware, upload.single("cv"), async (req, res) => {
+  try {
+    const jobId = req.params.id;
+    const userId = req.user._id || req.user.id;
+    const userName = req.user.name;
+
+    if (!req.file) {
+      return res.status(400).json({ message: "No CV file uploaded" });
+    }
+
+    let cvUrl = "";
+    const fileName = req.file.originalname;
+
+    // Check if Cloudinary is configured
+    if (process.env.CLOUDINARY_CLOUD_NAME) {
+      try {
+        cvUrl = await new Promise((resolve, reject) => {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            {
+              folder: "smarthire_cvs",
+              resource_type: "raw",
+              public_id: `cv_${jobId}_${userId}_${Date.now()}`,
+            },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result.secure_url);
+            }
+          );
+          uploadStream.end(req.file.buffer);
+        });
+        console.log("Uploaded CV to Cloudinary successfully:", cvUrl);
+      } catch (cloudinaryErr) {
+        console.error("Cloudinary upload failed, falling back to local storage:", cloudinaryErr);
+        // Fallback to local storage if Cloudinary fails
+        const localFileName = `cv_${jobId}_${userId}_${Date.now()}_${fileName.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
+        const localFilePath = path.join(uploadDir, localFileName);
+        fs.writeFileSync(localFilePath, req.file.buffer);
+        cvUrl = `/api/uploads/${localFileName}`;
+      }
+    } else {
+      // Use local storage
+      const localFileName = `cv_${jobId}_${userId}_${Date.now()}_${fileName.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
+      const localFilePath = path.join(uploadDir, localFileName);
+      fs.writeFileSync(localFilePath, req.file.buffer);
+      cvUrl = `/api/uploads/${localFileName}`;
+      console.log("Saved CV to local storage successfully:", cvUrl);
+    }
+
+    const applicationData = {
+      jobId,
+      applicantId: userId,
+      applicantName: userName,
+      fileName,
+      cvUrl,
+      status: "Pending"
+    };
+
+    if (useLocalDb) {
+      // Create local application record
+      const applications = readApplications();
+      const newApp = {
+        _id: new mongoose.Types.ObjectId().toString(),
+        ...applicationData,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      applications.push(newApp);
+      writeApplications(applications);
+
+      // Increment job CV count
+      const jobs = readJobs();
+      const jobIdx = jobs.findIndex((j) => j._id === jobId);
+      if (jobIdx !== -1) {
+        jobs[jobIdx].cvCount = (jobs[jobIdx].cvCount || 0) + 1;
+        writeJobs(jobs);
+      }
+
+      // Trigger background processing (runs asynchronously)
+      setTimeout(() => {
+        processCVApplication(newApp._id).catch((err) => {
+          console.error(`[AI Pipeline] Background processing failed for application ${newApp._id}:`, err);
+        });
+      }, 100);
+
+      return res.status(201).json({ ...newApp, id: newApp._id });
+    }
+
+    // MongoDB path
+    const newApp = new Application(applicationData);
+    await newApp.save();
+
+    // Increment job CV count
+    await Job.findByIdAndUpdate(jobId, { $inc: { cvCount: 1 } });
+
+    // Trigger background processing (runs asynchronously)
+    setTimeout(() => {
+      processCVApplication(newApp._id.toString()).catch((err) => {
+        console.error(`[AI Pipeline] Background processing failed for application ${newApp._id}:`, err);
+      });
+    }, 100);
+
+    const obj = newApp.toObject();
+    obj.id = obj._id;
+    res.status(201).json(obj);
+  } catch (error) {
+    console.error("Apply job error:", error);
+    res.status(500).json({ message: error.message || "Server error applying for job" });
+  }
+});
+
+// Fetch applications for a specific job post (HR access only)
+app.get("/api/jobs/:id/applications", authMiddleware, async (req, res) => {
+  try {
+    const jobId = req.params.id;
+    if (req.user.role !== "hr") {
+      return res.status(403).json({ message: "Access denied. Only HR can view job applications." });
+    }
+
+    if (useLocalDb) {
+      const applications = readApplications();
+      const filtered = applications.filter((app) => app.jobId === jobId);
+      const mapped = filtered.map((app) => ({ ...app, id: app._id }));
+      return res.json(mapped);
+    }
+
+    const applications = await Application.find({ jobId });
+    const mapped = applications.map((app) => {
+      const obj = app.toObject();
+      obj.id = obj._id;
+      return obj;
+    });
+    res.json(mapped);
+  } catch (error) {
+    console.error("Fetch applications error:", error);
+    res.status(500).json({ message: "Server error fetching applications" });
+  }
+});
+
+// Download remote file from URL (redirect-following using core http/https modules)
+function downloadFile(url, destPath, redirectCount = 0) {
+  if (redirectCount > 5) {
+    return Promise.reject(new Error("Too many redirects"));
+  }
+  return new Promise((resolve, reject) => {
+    const protocol = url.startsWith("https") ? https : http;
+    const headers = {};
+    if (url.includes("cloudinary.com") && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+      const auth = Buffer.from(`${process.env.CLOUDINARY_API_KEY}:${process.env.CLOUDINARY_API_SECRET}`).toString("base64");
+      headers["Authorization"] = `Basic ${auth}`;
+    }
+
+    protocol.get(url, { headers }, (response) => {
+      // Handle HTTP redirects (301, 302, 307, 308)
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        return resolve(downloadFile(response.headers.location, destPath, redirectCount + 1));
+      }
+
+      if (response.statusCode !== 200) {
+        return reject(new Error(`Failed to download file: ${response.statusCode} ${response.statusMessage || ""}`));
+      }
+
+      const file = fs.createWriteStream(destPath);
+      response.pipe(file);
+
+      file.on("finish", () => {
+        file.close();
+        resolve();
+      });
+
+      file.on("error", (err) => {
+        fs.unlink(destPath, () => { });
+        reject(err);
+      });
+    }).on("error", (err) => {
+      fs.unlink(destPath, () => { });
+      reject(err);
+    });
+  });
+}
+
+// Spawn Python parser on the local CV file path
+function runPythonParser(pdfPath) {
+  return new Promise((resolve, reject) => {
+    // Paths: __dirname = frontend/server, go up 2 levels to project root, then into backend/
+    const pythonPath = path.join(__dirname, "..", "..", "backend", "venv", "Scripts", "python.exe");
+    const scriptPath = path.join(__dirname, "..", "..", "backend", "scripts", "parse_single.py");
+
+    console.log(`[AI Pipeline] Spawning script: ${pythonPath} ${scriptPath} "${pdfPath}"`);
+
+    const pyProcess = spawn(pythonPath, [scriptPath, pdfPath]);
+
+    let stdoutData = "";
+    let stderrData = "";
+
+    pyProcess.stdout.on("data", (data) => {
+      stdoutData += data.toString();
+    });
+
+    pyProcess.stderr.on("data", (data) => {
+      stderrData += data.toString();
+    });
+
+    pyProcess.on("close", (code) => {
+      if (code !== 0) {
+        return reject(new Error(`Python process exited with code ${code}. Stderr: ${stderrData}`));
+      }
+      try {
+        // Library logs (YOLO, PaddleOCR, BertNER) pollute stdout before the JSON result.
+        // Find the last line that looks like a JSON object.
+        const lines = stdoutData.trim().split("\n");
+        let jsonLine = null;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const trimmed = lines[i].trim();
+          if (trimmed.startsWith("{")) {
+            jsonLine = trimmed;
+            break;
+          }
+        }
+        if (!jsonLine) {
+          return reject(new Error(`No JSON found in Python stdout. Output: ${stdoutData.substring(0, 500)}`));
+        }
+        const parsed = JSON.parse(jsonLine);
+        if (parsed.error) {
+          return reject(new Error(`Python script internal error: ${parsed.error}`));
+        }
+        resolve(parsed);
+      } catch (err) {
+        reject(new Error(`Failed to parse Python stdout. Output snippet: ${stdoutData.substring(0, 500)}... Error: ${err.message}`));
+      }
+    });
+  });
+}
+
+// Compare candidate details with job description using AI (Gemini or Grok) API
+async function compareCVWithJobAI(job, candidate) {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const grokKey = process.env.XAI_API_KEY || process.env.GROK_API_KEY;
+
+  if (!geminiKey && !grokKey) {
+    console.warn("[AI Pipeline] ⚠️ Neither GEMINI_API_KEY nor XAI_API_KEY is configured. Using fallback matching.");
+    return simulateMatching(job, candidate);
+  }
+
+  const promptText = `
+You are an expert AI recruitment assistant. You evaluate candidates' CVs against job descriptions.
+Output ONLY a valid JSON object matching this schema exactly:
+{
+  "matchScore": <integer 0-100>,
+  "skillsMatched": ["matched skill 1", "matched skill 2"],
+  "educationMatch": "1-2 sentences on how education fits",
+  "experienceMatch": "1-2 sentences on how experience fits",
+  "explanation": "2-3 sentences overall evaluation",
+  "isRecommended": <boolean true if score >= 70>
+}
+
+Job Requirements:
+Title: ${job.title}
+Description: ${job.description || ""}
+Required Skills: ${JSON.stringify(job.skills)}
+Minimum Education: ${job.minEducation || "Any"}
+Minimum Experience: ${job.minExperience || 0} years
+
+Candidate CV - Extracted Entities (from BERT + SpaCy NER):
+Skills Found: ${JSON.stringify(candidate.skills)}
+Education Found: ${JSON.stringify(candidate.education)}
+Work Roles Found: ${JSON.stringify(candidate.roles)}
+Companies Found: ${JSON.stringify(candidate.companies || [])}
+Projects Found: ${JSON.stringify(candidate.projects)}
+
+Candidate CV - Full OCR Text:
+${(candidate.rawText || "").substring(0, 3000)}`;
+
+  try {
+    let hostname = "";
+    let path = "";
+    let requestBody = "";
+    let headers = { "Content-Type": "application/json" };
+    const isGemini = !!geminiKey;
+
+    if (isGemini) {
+      console.log("[AI Pipeline] Using Gemini AI for CV comparison (via https.request)");
+      hostname = "generativelanguage.googleapis.com";
+      path = `/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`;
+      requestBody = JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }],
+        generationConfig: { responseMimeType: "application/json" }
+      });
+    } else {
+      console.log("[AI Pipeline] Using Grok AI for CV comparison");
+      hostname = "api.xai.com";
+      path = "/v1/chat/completions";
+      headers["Authorization"] = `Bearer ${grokKey}`;
+      requestBody = JSON.stringify({
+        model: "grok-beta",
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: promptText }]
+      });
+    }
+
+    headers["Content-Length"] = Buffer.byteLength(requestBody);
+
+    const options = {
+      hostname,
+      port: 443,
+      path,
+      method: "POST",
+      headers,
+      timeout: 60000 // 60s timeout bypasses fetch bug
+    };
+
+    const data = await new Promise((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let responseData = '';
+        res.on('data', (chunk) => { responseData += chunk; });
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            try { resolve(JSON.parse(responseData)); }
+            catch (e) { reject(new Error("Failed to parse API JSON")); }
+          } else {
+            reject(new Error(`API returned status ${res.statusCode}: ${responseData}`));
+          }
+        });
+      });
+      req.on('error', (e) => reject(e));
+      req.on('timeout', () => { req.destroy(); reject(new Error('Timeout after 60s')); });
+      req.write(requestBody);
+      req.end();
+    });
+
+    let jsonString = "";
+    if (isGemini) {
+      jsonString = data.candidates[0].content.parts[0].text;
+    } else {
+      jsonString = data.choices[0].message.content;
+    }
+
+    // Sometimes Gemini wraps JSON in markdown block
+    jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(jsonString);
+
+  } catch (error) {
+    console.error("[AI Pipeline] AI API call failed. Falling back to simulated matching:", error.message);
+    return simulateMatching(job, candidate);
+  }
+}
+
+// High-quality local algorithmic matching as robust fallback (No API Key Required!)
+function simulateMatching(job, candidate) {
+  // Normalize job skills for better matching
+  const jobSkills = (job.skills || []).map(s => s.toLowerCase().trim());
+  const candSkills = (candidate.skills || []).map(s => s.toLowerCase().trim());
+
+  // Also check if any job skills were mentioned in the raw OCR text (often NER misses some)
+  const rawTextLower = (candidate.rawText || "").toLowerCase();
+
+  const matched = (job.skills || []).filter(skill => {
+    const sLower = skill.toLowerCase().trim();
+    return candSkills.includes(sLower) || rawTextLower.includes(sLower);
+  });
+
+  // 1. Calculate Skills Score (Max 50 points)
+  let score = 0;
+  if (jobSkills.length > 0) {
+    score += (matched.length / jobSkills.length) * 50;
+  } else {
+    score += 50;
+  }
+
+  // 2. Calculate Experience Score (Max 30 points)
+  const minYears = job.minExperience || 0;
+  let expMatchText = "Experience evaluation requires manual review.";
+
+  // Try to find year numbers in candidate text if roles array is empty
+  const hasExperience = (candidate.roles && candidate.roles.length > 0) || rawTextLower.match(/\b(experience|worked|years|since 20)\b/);
+  if (minYears === 0) {
+    score += 30; // Perfect match if no experience required
+    expMatchText = "Entry-level role, candidate meets the minimum requirements.";
+  } else if (hasExperience) {
+    score += 25; // Good match if they have any experience and some is required
+    expMatchText = `Candidate shows relevant professional experience, potentially fulfilling the ${minYears}+ years requirement.`;
+  } else {
+    score += 10; // Penalty if no experience found but required
+    expMatchText = `Insufficient evidence of the required ${minYears} years of experience.`;
+  }
+
+  // 3. Calculate Education Score (Max 20 points)
+  let eduMatchText = "Education evaluation requires manual review.";
+  const eduReq = (job.minEducation || "").toLowerCase();
+  const candEduStr = JSON.stringify(candidate.education || []).toLowerCase();
+
+  if (!eduReq || eduReq === "any") {
+    score += 20;
+    eduMatchText = "No strict education requirements for this role.";
+  } else if (candEduStr.includes(eduReq) || candEduStr.includes("bsc") || candEduStr.includes("degree")) {
+    score += 20;
+    eduMatchText = `Candidate possesses a relevant degree fulfilling the ${job.minEducation} requirement.`;
+  } else {
+    score += 10;
+    eduMatchText = `Could not definitively verify a ${job.minEducation} from the parsed text.`;
+  }
+
+  const matchScore = Math.min(Math.round(score), 100);
+
+  // Generate Human-like Explanation
+  let explanation = "";
+  if (matchScore >= 80) {
+    explanation = `Outstanding candidate. They perfectly match ${matched.length} out of ${job.skills.length} required skills including key technical requirements. Their background aligns strongly with the job description.`;
+  } else if (matchScore >= 60) {
+    explanation = `Solid candidate with good potential. They possess ${matched.length} of the required skills. Some manual review of their exact experience timeline is recommended to ensure full alignment.`;
+  } else {
+    explanation = `Candidate lacks several core requirements. They only matched ${matched.length} of the ${job.skills.length} essential skills. May not be the best fit unless they have alternative undocumented experience.`;
+  }
+
+  return {
+    matchScore,
+    skillsMatched: matched,
+    educationMatch: eduMatchText,
+    experienceMatch: expMatchText,
+    explanation,
+    isRecommended: matchScore >= 70
+  };
+}
+
+// Helper to resolve the correct download URL for a Cloudinary asset
+// Uses Cloudinary's private_download_url for authenticated time-limited access
+function getSignedCloudinaryUrl(url) {
+  try {
+    if (!url.includes("cloudinary.com")) return url;
+
+    // Parse public_id and resource_type from the stored URL
+    // Example: https://res.cloudinary.com/cloud/image/upload/v123/folder/file.pdf
+    const parts = url.split("/");
+    const uploadIndex = parts.indexOf("upload");
+    if (uploadIndex === -1) return url;
+
+    const resourceType = parts[uploadIndex - 1] || "image"; // "image", "raw", or "video"
+
+    // Extract path after "upload/" - skip version if present (v1234...)
+    let subParts = parts.slice(uploadIndex + 1);
+    if (subParts[0] && subParts[0].match(/^v\d+$/)) {
+      subParts = subParts.slice(1);
+    }
+    let publicId = subParts.join("/");
+
+    // Strip extension from publicId (Cloudinary public IDs don't include extension)
+    const extMatch = publicId.match(/^(.+)\.([^.]+)$/);
+    const format = extMatch ? extMatch[2] : "pdf";
+    const cleanPublicId = extMatch ? extMatch[1] : publicId;
+
+    // Generate a private (signed, time-limited) download URL using the SDK
+    const downloadUrl = cloudinary.utils.private_download_url(
+      cleanPublicId,
+      format,
+      {
+        resource_type: resourceType,
+        type: "upload",
+        expires_at: Math.floor(Date.now() / 1000) + 300 // 5-minute expiry
+      }
+    );
+
+    console.log(`[AI Pipeline] Generated private download URL for public_id: ${cleanPublicId}`);
+    return downloadUrl;
+  } catch (err) {
+    console.error("[AI Pipeline] Failed to generate private download URL:", err.message);
+    return url;
+  }
+}
+
+// Background processing function for CV applications
+async function processCVApplication(applicationId) {
+  let tempFilePath = "";
+  let cvUrl = "";
+  try {
+    console.log(`[AI Pipeline] Starting background processing for Application ID: ${applicationId}`);
+
+    // 1. Fetch the application
+    let application;
+    if (useLocalDb) {
+      const applications = readApplications();
+      application = applications.find(app => app._id === applicationId);
+    } else {
+      application = await Application.findById(applicationId);
+    }
+
+    if (!application) {
+      throw new Error(`Application not found: ${applicationId}`);
+    }
+
+    // 2. Fetch the corresponding job
+    let job;
+    if (useLocalDb) {
+      const jobs = readJobs();
+      job = jobs.find(j => j._id === application.jobId);
+    } else {
+      job = await Job.findById(application.jobId);
+    }
+
+    if (!job) {
+      throw new Error(`Job not found: ${application.jobId}`);
+    }
+
+    // 3. Resolve the file location (if Cloudinary, download to local temp)
+    cvUrl = application.cvUrl;
+    if (cvUrl.startsWith("/api/uploads/")) {
+      const filename = cvUrl.replace("/api/uploads/", "");
+      tempFilePath = path.join(uploadDir, filename);
+    } else {
+      // Cloudinary / Remote file download
+      let tempName = `temp_${Date.now()}_${path.basename(cvUrl)}`;
+      if (!tempName.toLowerCase().endsWith(".pdf")) {
+        tempName += ".pdf";
+      }
+      tempFilePath = path.join(uploadDir, tempName);
+      console.log(`[AI Pipeline] Downloading remote file from Cloudinary: ${cvUrl} to ${tempFilePath}`);
+
+      // Request a signed URL from Cloudinary to authorize downloads of restricted media formats
+      const signedDownloadUrl = getSignedCloudinaryUrl(cvUrl);
+      await downloadFile(signedDownloadUrl, tempFilePath);
+    }
+
+    // 4. Run layout parsing and entity extraction via Python child process
+    console.log(`[AI Pipeline] Running Python CV Parser on file: ${tempFilePath}`);
+    const parserResult = await runPythonParser(tempFilePath);
+    console.log(`[AI Pipeline] Successfully parsed CV with Python parser.`);
+
+    // 5. Compare candidate CV details with Job requirements using Grok AI or simulated overlap
+    console.log(`[AI Pipeline] Comparing parsed details with Job requirements...`);
+    const comparisonResult = await compareCVWithJobAI(job, {
+      skills: parserResult.entities.SKILLS || [],
+      education: parserResult.entities.EDUCATION || [],
+      roles: parserResult.entities.ROLE || [],
+      companies: parserResult.entities.COMPANY || [],
+      projects: parserResult.entities.PROJECTS || [],
+      rawText: parserResult.raw_text || ""
+    });
+    console.log(`[AI Pipeline] Successfully completed AI comparison. Score: ${comparisonResult.matchScore}%`);
+
+    // 6. Update database record with parsed text, skills, and AI ratings
+    const updatedData = {
+      rawText: parserResult.raw_text,
+      skills: parserResult.entities.SKILLS || [],
+      education: parserResult.entities.EDUCATION || [],
+      roles: parserResult.entities.ROLE || [],
+      projects: parserResult.entities.PROJECTS || [],
+      matchScore: comparisonResult.matchScore,
+      skillsMatched: comparisonResult.skillsMatched || [],
+      educationMatch: comparisonResult.educationMatch || "-",
+      experienceMatch: comparisonResult.experienceMatch || "-",
+      explanation: comparisonResult.explanation || "",
+      isRecommended: comparisonResult.isRecommended || false,
+      status: comparisonResult.isRecommended ? "Shortlisted" : "Rejected"
+    };
+
+    if (useLocalDb) {
+      const applications = readApplications();
+      const idx = applications.findIndex(app => app._id === applicationId);
+      if (idx !== -1) {
+        applications[idx] = {
+          ...applications[idx],
+          ...updatedData,
+          updatedAt: new Date().toISOString()
+        };
+        writeApplications(applications);
+      }
+    } else {
+      await Application.findByIdAndUpdate(applicationId, {
+        $set: updatedData
+      });
+    }
+
+    console.log(`[AI Pipeline] Completed analysis successfully for Application ID: ${applicationId}`);
+  } catch (err) {
+    console.error(`[AI Pipeline] Error during CV background processing:`, err);
+    throw err;
+  } finally {
+    // Clean up temporary remote file download
+    if (tempFilePath && cvUrl && !cvUrl.startsWith("/api/uploads/")) {
+      try {
+        fs.unlinkSync(tempFilePath);
+        console.log(`[AI Pipeline] Cleaned up temporary download file: ${tempFilePath}`);
+      } catch (cleanupErr) {
+        console.error(`[AI Pipeline] Failed to delete temp file: ${tempFilePath}`, cleanupErr);
+      }
+    }
+  }
+}
+
+// Run analysis on a specific application manually (HR only)
+app.post("/api/applications/:id/analyze", authMiddleware, async (req, res) => {
+  try {
+    const applicationId = req.params.id;
+    if (req.user.role !== "hr") {
+      return res.status(403).json({ message: "Access denied. Only HR can analyze CVs." });
+    }
+
+    console.log(`[AI Pipeline] Manual analysis requested for Application ID: ${applicationId}`);
+    // Run the background analysis synchronously for the response
+    await processCVApplication(applicationId);
+
+    // Fetch the updated application
+    let updatedApp;
+    if (useLocalDb) {
+      const applications = readApplications();
+      updatedApp = applications.find(app => app._id === applicationId);
+    } else {
+      updatedApp = await Application.findById(applicationId);
+    }
+
+    if (!updatedApp) {
+      return res.status(404).json({ message: "Application not found after analysis" });
+    }
+
+    const obj = useLocalDb ? { ...updatedApp, id: updatedApp._id } : updatedApp.toObject();
+    if (!useLocalDb) obj.id = obj._id;
+
+    res.json(obj);
+  } catch (error) {
+    console.error("Manual analysis error:", error);
+    res.status(500).json({ message: error.message || "Server error running analysis" });
   }
 });
 
