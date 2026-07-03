@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Job, mockJobs, mockCVs, mockResults } from '../data/mockData';
+import { Job, mockResults } from '../data/mockData';
 import { StatusBadge } from '../components/StatusBadge';
 import { SkillTag } from '../components/SkillTag';
 import { CountdownBadge } from '../components/CountdownBadge';
@@ -22,9 +22,40 @@ export function JobDetails() {
   const navigate = useNavigate();
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
+  const [jobCVs, setJobCVs] = useState<any[]>([]);
+  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
+
+  const handleAnalyzeCV = async (cvId: string) => {
+    setAnalyzingId(cvId);
+    try {
+      const token = localStorage.getItem("smarthire_token");
+      const res = await fetch(`/api/applications/${cvId}/analyze`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || "Analysis failed");
+      }
+      
+      const updatedCv = await res.json();
+      toast.success("Analysis completed successfully!");
+      
+      // Update the CV details inside the table state
+      setJobCVs(prevCVs => prevCVs.map(cv => (cv.id === cvId || cv._id === cvId) ? updatedCv : cv));
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Failed to run CV analysis");
+    } finally {
+      setAnalyzingId(null);
+    }
+  };
 
   useEffect(() => {
-    const fetchJob = async () => {
+    const fetchJobAndApplications = async () => {
       try {
         const token = localStorage.getItem("smarthire_token");
         const res = await fetch(`/api/jobs/${id}`, {
@@ -37,6 +68,17 @@ export function JobDetails() {
         }
         const data = await res.json();
         setJob(data);
+
+        // Fetch applications from the database
+        const appsRes = await fetch(`/api/jobs/${id}/applications`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        if (appsRes.ok) {
+          const appsData = await appsRes.json();
+          setJobCVs(appsData);
+        }
       } catch (err: any) {
         console.error(err);
         toast.error("Failed to load job details");
@@ -45,7 +87,7 @@ export function JobDetails() {
         setLoading(false);
       }
     };
-    fetchJob();
+    fetchJobAndApplications();
   }, [id, navigate]);
 
   if (loading || !job) {
@@ -57,12 +99,40 @@ export function JobDetails() {
     );
   }
 
-  const jobCVs = mockCVs.filter((cv) => cv.jobId === job.id);
   const jobResults = mockResults.
   filter((r) => r.jobId === job.id).
   sort((a, b) => a.rank - b.rank);
+  
+  // Sort jobCVs by score and map rank dynamically
+  const jobApplications = [...jobCVs]
+    .sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0))
+    .map((cv, index) => {
+      // If matches exist from DB, use them
+      if (cv.matchScore !== undefined && cv.matchScore > 0) {
+        return {
+          ...cv,
+          rank: index + 1,
+          isRecommended: cv.isRecommended ?? (cv.matchScore >= 70)
+        };
+      }
+      
+      // Otherwise fallback to mock data
+      const mockResult = jobResults.find((r) => r.applicantId === cv.applicantId || r.applicantId === cv.id);
+      return {
+        ...cv,
+        matchScore: mockResult ? mockResult.matchScore : 0,
+        skillsMatched: mockResult ? mockResult.skillsMatched : [],
+        educationMatch: mockResult ? mockResult.educationMatch : "-",
+        experienceMatch: mockResult ? mockResult.experienceMatch : "-",
+        explanation: mockResult ? mockResult.explanation : "",
+        isRecommended: mockResult ? mockResult.isRecommended : false,
+        rank: mockResult ? mockResult.rank : index + 1,
+        status: mockResult ? (mockResult.isRecommended ? 'Shortlisted' : 'Not Shortlisted') : cv.status
+      };
+    });
+
   const isClosed = new Date(job.closingDate) < new Date();
-  const hasResults = isClosed && jobCVs.length > 0;
+  const hasResults = isClosed && jobApplications.length > 0;
   const getScoreColor = (score: number) => {
     if (score >= 85) return 'text-emerald-700 bg-emerald-50';
     if (score >= 70) return 'text-indigo-700 bg-indigo-50';
@@ -75,10 +145,7 @@ export function JobDetails() {
     if (score >= 50) return 'bg-amber-500';
     return 'bg-rose-500';
   };
-  // Find result for a given CV
-  const getResultForCV = (applicantId: string) => {
-    return jobResults.find((r) => r.applicantId === applicantId);
-  };
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <button
@@ -231,109 +298,101 @@ export function JobDetails() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {jobCVs.
-              map((cv) => {
-                const result = getResultForCV(cv.applicantId);
-                return {
-                  cv,
-                  result
-                };
-              }).
-              sort((a, b) => {
-                if (hasResults && a.result && b.result) {
-                  return a.result.rank - b.result.rank;
-                }
-                return 0;
-              }).
-              map(({ cv, result }) =>
-              <tr
-                key={cv.id}
-                className="hover:bg-slate-50 transition-colors">
-                
-                      {hasResults &&
-                <td className="p-4">
-                          {result ?
-                  <div className="flex items-center gap-1.5">
-                              <span className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-sm font-bold text-slate-700 border border-slate-200">
-                                {result.rank}
-                              </span>
-                              {result.isRecommended &&
-                    <AwardIcon className="w-4 h-4 text-indigo-500" />
-                    }
-                            </div> :
-
-                  <span className="text-slate-400 text-sm">-</span>
-                  }
-                        </td>
-                }
-                      <td className="p-4 text-sm font-medium text-slate-900">
-                        {cv.applicantName}
+                {jobApplications.map((cv) => (
+                  <tr key={cv.id || cv._id} className="hover:bg-slate-50 transition-colors">
+                    {hasResults && (
+                      <td className="p-4">
+                        {cv.matchScore !== undefined ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-sm font-bold text-slate-700 border border-slate-200">
+                              {cv.rank}
+                            </span>
+                            {cv.isRecommended && (
+                              <AwardIcon className="w-4 h-4 text-indigo-500" />
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 text-sm">-</span>
+                        )}
                       </td>
-                      <td className="p-4 text-sm text-slate-600">
-                        <div className="flex items-center gap-2">
-                          <FileTextIcon className="w-4 h-4 text-slate-400" />
-                          {cv.fileName}
-                        </div>
-                      </td>
-                      <td className="p-4 text-sm text-slate-600">
-                        {new Date(cv.uploadDate).toLocaleDateString()}
-                      </td>
-                      {hasResults && result ?
-                <>
-                          <td className="p-4">
-                            <div className="flex items-center gap-2.5 min-w-[140px]">
-                              <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
-                                <div
-                          className={`h-full rounded-full ${getProgressBarColor(result.matchScore)}`}
-                          style={{
-                            width: `${result.matchScore}%`
-                          }}>
-                        </div>
+                    )}
+                    <td className="p-4 text-sm font-medium text-slate-900">
+                      {cv.applicantName}
+                    </td>
+                    <td className="p-4 text-sm text-slate-600">
+                      <div className="flex items-center gap-2">
+                        <FileTextIcon className="w-4 h-4 text-slate-400" />
+                        {cv.fileName}
+                      </div>
+                    </td>
+                    <td className="p-4 text-sm text-slate-600">
+                      {new Date(cv.createdAt || cv.uploadDate).toLocaleDateString()}
+                    </td>
+                    {hasResults && cv.matchScore !== undefined ? (
+                      <>
+                        <td className="p-4">
+                          <div className="flex items-center gap-2.5 min-w-[140px]">
+                            <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${getProgressBarColor(cv.matchScore)}`}
+                                style={{
+                                  width: `${cv.matchScore}%`
+                                }}>
                               </div>
-                              <span
-                        className={`text-xs font-bold px-2 py-0.5 rounded-full ${getScoreColor(result.matchScore)}`}>
-                        
-                                {result.matchScore}%
-                              </span>
                             </div>
-                          </td>
-                          <td className="p-4">
                             <span
-                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${result.isRecommended ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600'}`}>
-                      
-                              {result.isRecommended &&
-                      <CheckCircleIcon className="w-3 h-3" />
-                      }
-                              {result.isRecommended ?
-                      'Shortlisted' :
-                      'Not Shortlisted'}
+                              className={`text-xs font-bold px-2 py-0.5 rounded-full ${getScoreColor(cv.matchScore)}`}>
+                              {cv.matchScore}%
                             </span>
-                          </td>
-                        </> :
-                hasResults ?
-                <>
-                          <td className="p-4 text-sm text-slate-400">-</td>
-                          <td className="p-4">
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
-                              Pending
-                            </span>
-                          </td>
-                        </> :
-
-                <td className="p-4">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700">
-                            {cv.status}
+                          </div>
+                        </td>
+                        <td className="p-4">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${cv.isRecommended ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600'}`}>
+                            {cv.isRecommended && (
+                              <CheckCircleIcon className="w-3 h-3" />
+                            )}
+                            {cv.isRecommended ? 'Shortlisted' : 'Not Shortlisted'}
                           </span>
                         </td>
-                }
-                      <td className="p-4 text-right">
-                        <button className="text-indigo-600 hover:text-indigo-900 text-sm font-medium flex items-center justify-end gap-1 w-full">
-                          <DownloadIcon className="w-4 h-4" />
-                          Download
-                        </button>
+                      </>
+                    ) : hasResults ? (
+                      <>
+                        <td className="p-4 text-sm text-slate-400">-</td>
+                        <td className="p-4">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
+                            Pending
+                          </span>
+                        </td>
+                      </>
+                    ) : (
+                      <td className="p-4">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700">
+                          {cv.status}
+                        </span>
                       </td>
-                    </tr>
-              )}
+                    )}
+                    <td className="p-4 text-right flex items-center justify-end gap-3">
+                      <button
+                        onClick={() => handleAnalyzeCV(cv.id || cv._id)}
+                        disabled={analyzingId === (cv.id || cv._id)}
+                        className="text-emerald-600 hover:text-emerald-800 text-sm font-medium flex items-center gap-1 disabled:opacity-50"
+                      >
+                        <SparklesIcon className={`w-4 h-4 ${analyzingId === (cv.id || cv._id) ? 'animate-spin' : ''}`} />
+                        {analyzingId === (cv.id || cv._id) ? 'Analyzing...' : (cv.matchScore && cv.matchScore > 0) ? 'Re-Analyze' : 'Analyze'}
+                      </button>
+                      <a
+                        href={cv.cvUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-indigo-600 hover:text-indigo-900 text-sm font-medium flex items-center gap-1 cursor-pointer no-underline"
+                      >
+                        <DownloadIcon className="w-4 h-4" />
+                        Download
+                      </a>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div> :
