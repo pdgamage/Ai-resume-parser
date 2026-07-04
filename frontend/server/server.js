@@ -1285,6 +1285,144 @@ app.post("/api/applications/:id/send-email", authMiddleware, async (req, res) =>
   }
 });
 
+function getMockContactDetails(id) {
+  const mocks = {
+    'r1': { name: 'Dinithi Jayasuriya', email: 'dinithi.j@example.com', phone: '+94 77 456 7890' },
+    'r2': { name: 'Malith Rajapaksha', email: 'malith.r@example.com', phone: '+94 77 567 8901' },
+    'r3': { name: 'Sanduni Weerasinghe', email: 'sanduni.w@example.com', phone: '+94 77 678 9012' },
+    'r4': { name: 'Kasun Perera', email: 'kasun.perera@example.com', phone: '+94 77 123 4567' },
+    'r5': { name: 'Amandi Silva', email: 'amandi.silva@example.com', phone: '+94 77 234 5678' },
+    'r6': { name: 'Nuwan Fernando', email: 'nuwan.fernando@example.com', phone: '+94 77 345 6789' }
+  };
+  return mocks[id] || { name: "Candidate", email: "", phone: "" };
+}
+
+async function extractContactInfoWithGemini(rawText) {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!geminiKey) {
+    throw new Error("GEMINI_API_KEY is not configured");
+  }
+
+  const promptText = `
+You are an expert recruitment parser. Extract the candidate's name, email, and phone number from the raw resume text below.
+Output ONLY a valid JSON object matching this schema exactly:
+{
+  "name": "Candidate Name",
+  "email": "candidate.email@domain.com",
+  "phone": "+1 555 123 4567"
+}
+
+If any field is not found in the text, return an empty string for that field.
+
+Raw Resume Text:
+${rawText.substring(0, 4000)}
+`;
+
+  const hostname = "generativelanguage.googleapis.com";
+  const path = `/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`;
+  const requestBody = JSON.stringify({
+    contents: [{ parts: [{ text: promptText }] }],
+    generationConfig: { responseMimeType: "application/json" }
+  });
+
+  const options = {
+    hostname,
+    port: 443,
+    path,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(requestBody)
+    },
+    timeout: 30000
+  };
+
+  const data = await new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      let responseData = '';
+      res.on('data', (chunk) => { responseData += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(responseData)); }
+          catch (e) { reject(new Error("Failed to parse API JSON")); }
+        } else {
+          reject(new Error(`API returned status ${res.statusCode}: ${responseData}`));
+        }
+      });
+    });
+    req.on('error', (e) => reject(e));
+    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout after 30s')); });
+    req.write(requestBody);
+    req.end();
+  });
+
+  let jsonString = data.candidates[0].content.parts[0].text;
+  jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+  return JSON.parse(jsonString);
+}
+
+// Fetch candidate email and phone details dynamically (HR access only)
+app.get("/api/applications/:id/contact-info", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (req.user.role !== "hr") {
+      return res.status(403).json({ message: "Access denied. Only HR can view contact info." });
+    }
+
+    if (useLocalDb) {
+      const applications = readApplications();
+      const app = applications.find(a => a._id === id || a.id === id);
+      if (!app) {
+        return res.json(getMockContactDetails(id));
+      }
+      if (app.email && app.phone) {
+        return res.json({ name: app.applicantName, email: app.email, phone: app.phone });
+      }
+      if (app.rawText) {
+        try {
+          const contact = await extractContactInfoWithGemini(app.rawText);
+          return res.json({
+            name: contact.name || app.applicantName,
+            email: contact.email || "",
+            phone: contact.phone || ""
+          });
+        } catch (err) {
+          console.error("Gemini contact extraction failed (local DB):", err.message);
+        }
+      }
+      return res.json({ name: app.applicantName, email: app.email || "", phone: app.phone || "" });
+    }
+
+    // MongoDB path
+    const application = await Application.findById(id);
+    if (!application) {
+      return res.json(getMockContactDetails(id));
+    }
+
+    if (application.rawText) {
+      try {
+        const contact = await extractContactInfoWithGemini(application.rawText);
+        return res.json({
+          name: contact.name || application.applicantName,
+          email: contact.email || "",
+          phone: contact.phone || ""
+        });
+      } catch (err) {
+        console.error("Gemini contact extraction failed (MongoDB):", err.message);
+      }
+    }
+
+    res.json({
+      name: application.applicantName,
+      email: application.email || "",
+      phone: application.phone || ""
+    });
+  } catch (error) {
+    console.error("Fetch contact info error:", error);
+    res.status(500).json({ message: error.message || "Server error fetching contact info" });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

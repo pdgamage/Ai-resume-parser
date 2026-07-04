@@ -8,7 +8,12 @@ import {
   CheckCircleIcon,
   AlertTriangleIcon,
   GraduationCapIcon,
-  BriefcaseIcon } from
+  BriefcaseIcon,
+  MailIcon,
+  PhoneIcon,
+  CopyIcon,
+  XIcon,
+  UserIcon } from
 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -18,6 +23,36 @@ interface CandidateResultCardProps {
 }
 export function CandidateResultCard({ result, onEmailSent }: CandidateResultCardProps) {
   const [isSending, setIsSending] = useState(false);
+  const [isContactModalOpen, setIsContactModalOpen] = useState(false);
+  const [isFetchingContact, setIsFetchingContact] = useState(false);
+  const [contactInfo, setContactInfo] = useState<{ name: string; email: string; phone: string } | null>(
+    result.email || result.phone ? { name: result.applicantName, email: result.email || "", phone: result.phone || "" } : null
+  );
+
+  const handleContactCandidate = async () => {
+    setIsContactModalOpen(true);
+    if (contactInfo) return; // already loaded or pre-populated
+
+    setIsFetchingContact(true);
+    try {
+      const token = localStorage.getItem("smarthire_token");
+      const res = await fetch(`/api/applications/${result.id}/contact-info`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        throw new Error("Failed to load candidate contact details");
+      }
+      const data = await res.json();
+      setContactInfo(data);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Could not load contact details");
+    } finally {
+      setIsFetchingContact(false);
+    }
+  };
 
   const handleSendEmail = async () => {
     if (isSending || result.emailSent) return;
@@ -163,8 +198,11 @@ export function CandidateResultCard({ result, onEmailSent }: CandidateResultCard
           </div>
 
           <div className="mt-5 flex justify-end gap-3">
-            <button className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">
-              View Full CV
+            <button 
+              onClick={handleContactCandidate}
+              className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+            >
+              Contact Candidate
             </button>
             <button
               onClick={handleSendEmail}
@@ -180,6 +218,128 @@ export function CandidateResultCard({ result, onEmailSent }: CandidateResultCard
           </div>
         </div>
       }
+
+      {isContactModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden transform scale-100 transition-all font-sans animate-in fade-in duration-200">
+            {/* Header */}
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-indigo-50/50">
+              <h3 className="text-lg font-bold text-indigo-950 flex items-center gap-2">
+                <UserIcon className="w-5 h-5 text-indigo-600" />
+                Candidate Contact Details
+              </h3>
+              <button 
+                onClick={() => setIsContactModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <XIcon className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-5 min-h-[220px] flex flex-col justify-center">
+              {isFetchingContact ? (
+                <div className="flex flex-col items-center justify-center py-6 space-y-3">
+                  <div className="w-10 h-10 border-4 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin"></div>
+                  <p className="text-sm font-medium text-slate-500">Scanning CV with Gemini AI...</p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-start gap-3">
+                    <div className="bg-slate-100 p-2.5 rounded-xl text-slate-600 shrink-0 mt-0.5">
+                      <UserIcon className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Full Name</span>
+                      <p className="text-base font-bold text-slate-900 mt-0.5">{contactInfo?.name || result.applicantName}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start justify-between gap-3 group">
+                    <div className="flex items-start gap-3">
+                      <div className="bg-slate-100 p-2.5 rounded-xl text-slate-600 shrink-0 mt-0.5">
+                        <MailIcon className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Email Address</span>
+                        <p className="text-base font-medium text-slate-900 mt-0.5 break-all">
+                          {contactInfo?.email || "No email found"}
+                        </p>
+                      </div>
+                    </div>
+                    {contactInfo?.email && (
+                      <div className="flex items-center gap-2 self-center shrink-0">
+                        <a 
+                          href={`mailto:${contactInfo.email}`}
+                          className="p-2 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Send mail directly"
+                        >
+                          <MailIcon className="w-4 h-4" />
+                        </a>
+                        <button 
+                          onClick={() => {
+                            navigator.clipboard.writeText(contactInfo?.email || "");
+                            toast.success("Email copied to clipboard!");
+                          }}
+                          className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Copy email"
+                        >
+                          <CopyIcon className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-start justify-between gap-3 group">
+                    <div className="flex items-start gap-3">
+                      <div className="bg-slate-100 p-2.5 rounded-xl text-slate-600 shrink-0 mt-0.5">
+                        <PhoneIcon className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Phone Number</span>
+                        <p className="text-base font-medium text-slate-900 mt-0.5">
+                          {contactInfo?.phone || "No phone number found"}
+                        </p>
+                      </div>
+                    </div>
+                    {contactInfo?.phone && (
+                      <div className="flex items-center gap-2 self-center shrink-0">
+                        <a 
+                          href={`tel:${contactInfo.phone}`}
+                          className="p-2 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition-colors"
+                          title="Call candidate"
+                        >
+                          <PhoneIcon className="w-4 h-4" />
+                        </a>
+                        <button 
+                          onClick={() => {
+                            navigator.clipboard.writeText(contactInfo?.phone || "");
+                            toast.success("Phone number copied to clipboard!");
+                          }}
+                          className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Copy phone number"
+                        >
+                          <CopyIcon className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+              <button 
+                onClick={() => setIsContactModalOpen(false)}
+                className="px-5 py-2 text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 transition-colors shadow-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>);
 
 }
