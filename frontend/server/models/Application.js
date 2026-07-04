@@ -76,6 +76,10 @@ const applicationSchema = new mongoose.Schema(
     isRecommended: {
       type: Boolean,
       default: false
+    },
+    emailSent: {
+      type: Boolean,
+      default: false
     }
   },
   {

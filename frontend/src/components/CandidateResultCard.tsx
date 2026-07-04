@@ -10,10 +10,56 @@ import {
   GraduationCapIcon,
   BriefcaseIcon } from
 'lucide-react';
+import toast from 'react-hot-toast';
+
 interface CandidateResultCardProps {
   result: ShortlistResult;
+  onEmailSent?: (updatedCandidate: any) => void;
 }
-export function CandidateResultCard({ result }: CandidateResultCardProps) {
+export function CandidateResultCard({ result, onEmailSent }: CandidateResultCardProps) {
+  const [isSending, setIsSending] = useState(false);
+
+  const handleSendEmail = async () => {
+    if (isSending || result.emailSent) return;
+    setIsSending(true);
+    try {
+      const token = localStorage.getItem("smarthire_token");
+      const res = await fetch(`/api/applications/${result.id}/send-email`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          jobId: result.jobId,
+          applicantId: result.applicantId,
+          applicantName: result.applicantName,
+          matchScore: result.matchScore,
+          skillsMatched: result.skillsMatched,
+          educationMatch: result.educationMatch,
+          experienceMatch: result.experienceMatch,
+          explanation: result.explanation,
+          isRecommended: result.isRecommended
+        })
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || "Failed to send email");
+      }
+
+      const updated = await res.json();
+      toast.success(`Email sent to ${result.applicantName} successfully!`);
+      if (onEmailSent) {
+        onEmailSent(updated);
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Failed to record sent email");
+    } finally {
+      setIsSending(false);
+    }
+  };
   const [isExpanded, setIsExpanded] = useState(false);
   const getScoreColor = (score: number) => {
     if (score >= 85) return 'text-emerald-600 bg-emerald-50 border-emerald-200';
@@ -120,8 +166,16 @@ export function CandidateResultCard({ result }: CandidateResultCardProps) {
             <button className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">
               View Full CV
             </button>
-            <button className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
-              Contact Candidate
+            <button
+              onClick={handleSendEmail}
+              disabled={isSending || result.emailSent}
+              className={`px-4 py-2 text-sm font-medium rounded-lg shadow-sm transition-colors ${
+                result.emailSent
+                  ? "text-slate-500 bg-slate-100 border border-slate-200 cursor-not-allowed shadow-none"
+                  : "text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+              }`}
+            >
+              {isSending ? "Sending..." : result.emailSent ? "Email Sent" : "Send Email"}
             </button>
           </div>
         </div>

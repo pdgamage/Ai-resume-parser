@@ -57,6 +57,17 @@ export function ShortlistResults() {
     );
   }
 
+  const handleEmailSent = (candidateId: string, updatedCandidate: any) => {
+    setJobCVs(prevCVs => {
+      const exists = prevCVs.some(cv => cv.id === candidateId || cv._id === candidateId);
+      if (exists) {
+        return prevCVs.map(cv => (cv.id === candidateId || cv._id === candidateId) ? { ...cv, emailSent: true } : cv);
+      } else {
+        return [...prevCVs, updatedCandidate];
+      }
+    });
+  };
+
   const results = [...jobCVs]
     .map((cv) => {
       if (cv.matchScore !== undefined) {
@@ -71,6 +82,7 @@ export function ShortlistResults() {
           experienceMatch: cv.experienceMatch || "-",
           explanation: cv.explanation || "",
           isRecommended: cv.isRecommended ?? (cv.matchScore >= 70),
+          emailSent: cv.emailSent || false,
         };
       }
       return null;
@@ -87,7 +99,7 @@ export function ShortlistResults() {
       rank: index + 1
     }));
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-6 max-w-5xl mx-auto font-sans">
       <button
         onClick={() => navigate(`/jobs/${job.id}`)}
         className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-900 mb-6 transition-colors">
@@ -130,7 +142,11 @@ export function ShortlistResults() {
           {results.length > 0 ?
           <div className="space-y-4">
               {results.map((result) =>
-            <CandidateResultCard key={result.id} result={result} />
+            <CandidateResultCard 
+              key={result.id} 
+              result={result} 
+              onEmailSent={(updated) => handleEmailSent(result.id, updated)}
+            />
             )}
             </div> :
 

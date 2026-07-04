@@ -1203,6 +1203,88 @@ app.post("/api/applications/:id/analyze", authMiddleware, async (req, res) => {
   }
 });
 
+// Send email to a candidate (marks as sent, prevents future clicks)
+app.post("/api/applications/:id/send-email", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { jobId, applicantId, applicantName } = req.body;
+    
+    if (req.user.role !== "hr") {
+      return res.status(403).json({ message: "Access denied. Only HR can send emails." });
+    }
+
+    if (useLocalDb) {
+      const applications = readApplications();
+      let app = applications.find(a => a._id === id || a.id === id);
+      if (!app) {
+        // Create placeholder application for mock results in local database
+        app = {
+          _id: id,
+          jobId: jobId || "j4",
+          applicantId: applicantId || "a4",
+          applicantName: applicantName || "Dinithi Jayasuriya",
+          fileName: `${(applicantName || "Candidate").replace(/\s+/g, '_')}_CV.pdf`,
+          cvUrl: "#",
+          status: "Pending",
+          emailSent: true,
+          matchScore: req.body.matchScore || 0,
+          skillsMatched: req.body.skillsMatched || [],
+          educationMatch: req.body.educationMatch || "",
+          experienceMatch: req.body.experienceMatch || "",
+          explanation: req.body.explanation || "",
+          isRecommended: req.body.isRecommended || false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        applications.push(app);
+      } else {
+        if (app.emailSent) {
+          return res.status(400).json({ message: "Email has already been sent to this candidate" });
+        }
+        app.emailSent = true;
+        app.updatedAt = new Date().toISOString();
+      }
+      writeApplications(applications);
+      return res.json({ ...app, id: app._id });
+    }
+
+    // MongoDB path
+    let application = await Application.findById(id);
+    if (!application) {
+      // Create placeholder application for mock results in MongoDB
+      application = new Application({
+        _id: id,
+        jobId: jobId || "j4",
+        applicantId: applicantId || "a4",
+        applicantName: applicantName || "Dinithi Jayasuriya",
+        fileName: `${(applicantName || "Candidate").replace(/\s+/g, '_')}_CV.pdf`,
+        cvUrl: "#",
+        status: "Pending",
+        emailSent: true,
+        matchScore: req.body.matchScore || 0,
+        skillsMatched: req.body.skillsMatched || [],
+        educationMatch: req.body.educationMatch || "",
+        experienceMatch: req.body.experienceMatch || "",
+        explanation: req.body.explanation || "",
+        isRecommended: req.body.isRecommended || false
+      });
+      await application.save();
+    } else {
+      if (application.emailSent) {
+        return res.status(400).json({ message: "Email has already been sent to this candidate" });
+      }
+      application.emailSent = true;
+      await application.save();
+    }
+    const obj = application.toObject();
+    obj.id = obj._id;
+    res.json(obj);
+  } catch (error) {
+    console.error("Send email error:", error);
+    res.status(500).json({ message: error.message || "Server error sending email" });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
