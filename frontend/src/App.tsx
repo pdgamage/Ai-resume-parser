@@ -14,6 +14,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import { HRDashboard } from "./pages/HRDashboard";
 import { CreateJob } from "./pages/CreateJob";
+import { ClosedJobs } from "./pages/ClosedJobs";
 import { JobDetails } from "./pages/JobDetails";
 import { ApplicantJobList } from "./pages/ApplicantJobList";
 import { ApplyJob } from "./pages/ApplyJob";
@@ -75,6 +76,7 @@ export function App() {
           {/* HR Routes */}
           <Route element={<HRLayout />}>
             <Route path="/dashboard" element={<HRDashboard />} />
+            <Route path="/jobs/closed" element={<ClosedJobs />} />
             <Route path="/jobs/create" element={<CreateJob />} />
             <Route path="/jobs/:id" element={<JobDetails />} />
             <Route path="/results/:jobId" element={<ShortlistResults />} />

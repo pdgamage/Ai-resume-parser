@@ -17,6 +17,11 @@ export function Sidebar() {
     name: 'Create New Job',
     path: '/jobs/create',
     icon: PlusCircleIcon
+  },
+  {
+    name: 'Closed Jobs',
+    path: '/jobs/closed',
+    icon: BriefcaseIcon
   }];
 
   return (

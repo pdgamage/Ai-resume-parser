@@ -103,11 +103,36 @@ export function JobDetails() {
   filter((r) => r.jobId === job.id).
   sort((a, b) => a.rank - b.rank);
   
+  // Merge database applications with mock results that are not already present in the database applications list
+  const mergedCVs = [...jobCVs];
+  jobResults.forEach(mr => {
+    const alreadyExists = mergedCVs.some(cv => cv.applicantId === mr.applicantId || cv.id === mr.applicantId || cv._id === mr.applicantId);
+    if (!alreadyExists) {
+      mergedCVs.push({
+        id: mr.id,
+        _id: mr.id,
+        jobId: mr.jobId,
+        applicantId: mr.applicantId,
+        applicantName: mr.applicantName,
+        fileName: `${mr.applicantName.replace(/\s+/g, '_')}_CV.pdf`,
+        cvUrl: "#", // mock URL
+        createdAt: job.closingDate,
+        status: mr.isRecommended ? 'Shortlisted' : 'Not Shortlisted',
+        matchScore: mr.matchScore,
+        skillsMatched: mr.skillsMatched,
+        educationMatch: mr.educationMatch,
+        experienceMatch: mr.experienceMatch,
+        explanation: mr.explanation,
+        isRecommended: mr.isRecommended
+      });
+    }
+  });
+
   // Sort jobCVs by score and map rank dynamically
-  const jobApplications = [...jobCVs]
+  const jobApplications = mergedCVs
     .sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0))
     .map((cv, index) => {
-      // If matches exist from DB, use them
+      // If matches exist from DB/pre-mapped, use them
       if (cv.matchScore !== undefined && cv.matchScore > 0) {
         return {
           ...cv,
@@ -117,7 +142,7 @@ export function JobDetails() {
       }
       
       // Otherwise fallback to mock data
-      const mockResult = jobResults.find((r) => r.applicantId === cv.applicantId || r.applicantId === cv.id);
+      const mockResult = jobResults.find((r) => r.applicantId === cv.applicantId || r.applicantId === cv.id || r.applicantId === cv._id);
       return {
         ...cv,
         matchScore: mockResult ? mockResult.matchScore : 0,
@@ -131,7 +156,7 @@ export function JobDetails() {
       };
     });
 
-  const isClosed = new Date(job.closingDate) < new Date();
+  const isClosed = job.status === 'Closed' || new Date(job.closingDate) < new Date();
   const hasResults = isClosed && jobApplications.length > 0;
   const getScoreColor = (score: number) => {
     if (score >= 85) return 'text-emerald-700 bg-emerald-50';
