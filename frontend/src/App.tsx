@@ -20,6 +20,7 @@ import { ApplicantJobList } from "./pages/ApplicantJobList";
 import { ApplyJob } from "./pages/ApplyJob";
 import { ShortlistResults } from "./pages/ShortlistResults";
 import Landing from "./pages/Landing";
+import { InterviewSchedule } from "./pages/InterviewSchedule";
 // Layouts
 const HRLayout = () => {
   const { user } = useAuth();
@@ -80,6 +81,7 @@ export function App() {
             <Route path="/jobs/create" element={<CreateJob />} />
             <Route path="/jobs/:id" element={<JobDetails />} />
             <Route path="/results/:jobId" element={<ShortlistResults />} />
+            <Route path="/schedule-interview" element={<InterviewSchedule />} />
           </Route>
 
           {/* Applicant Routes */}

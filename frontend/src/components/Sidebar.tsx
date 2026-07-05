@@ -22,6 +22,11 @@ export function Sidebar() {
     name: 'Closed Jobs',
     path: '/jobs/closed',
     icon: BriefcaseIcon
+  },
+  {
+    name: 'Interview Schedule',
+    path: '/schedule-interview',
+    icon: UsersIcon
   }];
 
   return (

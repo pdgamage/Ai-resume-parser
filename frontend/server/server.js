@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import User from "./models/User.js";
 import Job from "./models/Job.js";
 import Application from "./models/Application.js";
+import InterviewSchedule from "./models/InterviewSchedule.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -30,6 +31,7 @@ const __dirname = path.dirname(__filename);
 const DB_FILE = path.join(__dirname, "users.json");
 const JOBS_FILE = path.join(__dirname, "jobs.json");
 const APPLICATIONS_FILE = path.join(__dirname, "applications.json");
+const SCHEDULES_FILE = path.join(__dirname, "schedules.json");
 
 function readApplications() {
   if (!fs.existsSync(APPLICATIONS_FILE)) {
@@ -44,6 +46,21 @@ function readApplications() {
 
 function writeApplications(applications) {
   fs.writeFileSync(APPLICATIONS_FILE, JSON.stringify(applications, null, 2), "utf-8");
+}
+
+function readSchedules() {
+  if (!fs.existsSync(SCHEDULES_FILE)) {
+    return [];
+  }
+  try {
+    return JSON.parse(fs.readFileSync(SCHEDULES_FILE, "utf-8"));
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeSchedules(schedules) {
+  fs.writeFileSync(SCHEDULES_FILE, JSON.stringify(schedules, null, 2), "utf-8");
 }
 
 // Configure Cloudinary if credentials are provided in env
@@ -1420,6 +1437,73 @@ app.get("/api/applications/:id/contact-info", authMiddleware, async (req, res) =
   } catch (error) {
     console.error("Fetch contact info error:", error);
     res.status(500).json({ message: error.message || "Server error fetching contact info" });
+  }
+});
+
+// Fetch all interview schedules
+app.get("/api/interview-schedules", authMiddleware, async (req, res) => {
+  try {
+    if (useLocalDb) {
+      const schedules = readSchedules();
+      return res.json(schedules);
+    }
+    const schedules = await InterviewSchedule.find({});
+    res.json(schedules);
+  } catch (error) {
+    console.error("Fetch schedules error:", error);
+    res.status(500).json({ message: "Server error fetching interview schedules" });
+  }
+});
+
+// Create or update interview schedule for a job
+app.post("/api/interview-schedules", authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== "hr") {
+      return res.status(403).json({ message: "Access denied. Only HR can schedule interviews." });
+    }
+
+    const { jobId, jobTitle, date, time, location, notes } = req.body;
+    if (!jobId || !jobTitle || !date || !time) {
+      return res.status(400).json({ message: "Job ID, Job Title, Date, and Time are required" });
+    }
+
+    if (useLocalDb) {
+      const schedules = readSchedules();
+      let schedule = schedules.find(s => s.jobId === jobId);
+      if (schedule) {
+        schedule.date = date;
+        schedule.time = time;
+        schedule.location = location || "Zoom / Online";
+        schedule.notes = notes || "";
+        schedule.updatedAt = new Date().toISOString();
+      } else {
+        schedule = {
+          _id: new mongoose.Types.ObjectId().toString(),
+          jobId,
+          jobTitle,
+          date,
+          time,
+          location: location || "Zoom / Online",
+          notes: notes || "",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        schedules.push(schedule);
+      }
+      writeSchedules(schedules);
+      return res.json(schedule);
+    }
+
+    // MongoDB path
+    const updatedSchedule = await InterviewSchedule.findOneAndUpdate(
+      { jobId },
+      { jobTitle, date, time, location: location || "Zoom / Online", notes: notes || "" },
+      { new: true, upsert: true }
+    );
+    res.json(updatedSchedule);
+  } catch (error) {
+    console.error("Save schedule error:", error);
+    res.status(500).json({ message: "Server error saving interview schedule" });
   }
 });
 
