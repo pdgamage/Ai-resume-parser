@@ -84,7 +84,14 @@ export function CandidateResultCard({ result, onEmailSent }: CandidateResultCard
       }
 
       const updated = await res.json();
-      toast.success(`Email sent to ${result.applicantName} successfully!`);
+      if (updated.warning) {
+        toast(updated.warning, {
+          icon: '⚠️',
+          duration: 7000
+        });
+      } else {
+        toast.success(`Email sent to ${result.applicantName} successfully!`);
+      }
       if (onEmailSent) {
         onEmailSent(updated);
       }
@@ -204,16 +211,12 @@ export function CandidateResultCard({ result, onEmailSent }: CandidateResultCard
             >
               Contact Candidate
             </button>
-            <button
+             <button
               onClick={handleSendEmail}
-              disabled={isSending || result.emailSent}
-              className={`px-4 py-2 text-sm font-medium rounded-lg shadow-sm transition-colors ${
-                result.emailSent
-                  ? "text-slate-500 bg-slate-100 border border-slate-200 cursor-not-allowed shadow-none"
-                  : "text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
-              }`}
+              disabled={isSending}
+              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg shadow-sm transition-colors"
             >
-              {isSending ? "Sending..." : result.emailSent ? "Email Sent" : "Send Email"}
+              {isSending ? "Sending..." : result.emailSent ? "Resend Email" : "Send Email"}
             </button>
           </div>
         </div>

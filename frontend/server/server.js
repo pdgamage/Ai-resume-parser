@@ -9,6 +9,7 @@ import Job from "./models/Job.js";
 import Application from "./models/Application.js";
 import InterviewSchedule from "./models/InterviewSchedule.js";
 import fs from "fs";
+import nodemailer from "nodemailer";
 import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
@@ -17,6 +18,16 @@ import https from "https";
 import { spawn } from "child_process";
 
 dotenv.config();
+
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || "smtp.resend.com",
+  port: parseInt(process.env.SMTP_PORT || "465", 10),
+  secure: process.env.SMTP_PORT === "465",
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
 const app = express();
 app.use(cors());
@@ -1220,7 +1231,7 @@ app.post("/api/applications/:id/analyze", authMiddleware, async (req, res) => {
   }
 });
 
-// Send email to a candidate (marks as sent, prevents future clicks)
+// Send email to a candidate (marks as sent, can be resent)
 app.post("/api/applications/:id/send-email", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1229,6 +1240,12 @@ app.post("/api/applications/:id/send-email", authMiddleware, async (req, res) =>
     if (req.user.role !== "hr") {
       return res.status(403).json({ message: "Access denied. Only HR can send emails." });
     }
+
+    let candidateName = applicantName || "Candidate";
+    let candidateEmail = "";
+    let appJobId = jobId;
+
+    let appObj = null;
 
     if (useLocalDb) {
       const applications = readApplications();
@@ -1255,50 +1272,208 @@ app.post("/api/applications/:id/send-email", authMiddleware, async (req, res) =>
         };
         applications.push(app);
       } else {
-        if (app.emailSent) {
-          return res.status(400).json({ message: "Email has already been sent to this candidate" });
-        }
         app.emailSent = true;
         app.updatedAt = new Date().toISOString();
       }
       writeApplications(applications);
-      return res.json({ ...app, id: app._id });
+      appObj = { ...app, id: app._id };
+      appJobId = app.jobId;
+      candidateName = app.applicantName;
+      candidateEmail = app.email || "";
+    } else {
+      // MongoDB path
+      let application;
+      try {
+        application = await Application.findById(id);
+      } catch (err) {
+        // Handle CastError gracefully for mock IDs like 'r1'
+      }
+
+      if (!application) {
+        // Create placeholder application for mock results in MongoDB
+        application = new Application({
+          _id: id,
+          jobId: jobId || "j4",
+          applicantId: applicantId || "a4",
+          applicantName: applicantName || "Dinithi Jayasuriya",
+          fileName: `${(applicantName || "Candidate").replace(/\s+/g, '_')}_CV.pdf`,
+          cvUrl: "#",
+          status: "Pending",
+          emailSent: true,
+          matchScore: req.body.matchScore || 0,
+          skillsMatched: req.body.skillsMatched || [],
+          educationMatch: req.body.educationMatch || "",
+          experienceMatch: req.body.experienceMatch || "",
+          explanation: req.body.explanation || "",
+          isRecommended: req.body.isRecommended || false
+        });
+        await application.save();
+      } else {
+        application.emailSent = true;
+        await application.save();
+      }
+      appObj = application.toObject();
+      appObj.id = appObj._id;
+      appJobId = application.jobId;
+      candidateName = application.applicantName;
+      candidateEmail = application.email || "";
+
+      // If email is missing in the application, try to extract from rawText using Gemini
+      if (!candidateEmail && application.rawText) {
+        try {
+          const contact = await extractContactInfoWithGemini(application.rawText);
+          candidateEmail = contact.email;
+          candidateName = contact.name || candidateName;
+        } catch (err) {
+          console.error("Gemini contact extraction failed during email send:", err.message);
+        }
+      }
     }
 
-    // MongoDB path
-    let application = await Application.findById(id);
-    if (!application) {
-      // Create placeholder application for mock results in MongoDB
-      application = new Application({
-        _id: id,
-        jobId: jobId || "j4",
-        applicantId: applicantId || "a4",
-        applicantName: applicantName || "Dinithi Jayasuriya",
-        fileName: `${(applicantName || "Candidate").replace(/\s+/g, '_')}_CV.pdf`,
-        cvUrl: "#",
-        status: "Pending",
-        emailSent: true,
-        matchScore: req.body.matchScore || 0,
-        skillsMatched: req.body.skillsMatched || [],
-        educationMatch: req.body.educationMatch || "",
-        experienceMatch: req.body.experienceMatch || "",
-        explanation: req.body.explanation || "",
-        isRecommended: req.body.isRecommended || false
-      });
-      await application.save();
-    } else {
-      if (application.emailSent) {
-        return res.status(400).json({ message: "Email has already been sent to this candidate" });
-      }
-      application.emailSent = true;
-      await application.save();
+    // Resolve contact details from mocks if still missing (useful for mock candidates)
+    if (!candidateEmail) {
+      const mockContact = getMockContactDetails(id);
+      candidateEmail = mockContact.email;
+      candidateName = mockContact.name || candidateName;
     }
-    const obj = application.toObject();
-    obj.id = obj._id;
-    res.json(obj);
+
+    if (!candidateEmail) {
+      return res.status(400).json({ message: "Candidate email address could not be resolved from their resume." });
+    }
+
+    // Fetch Interview Schedule for the job
+    let schedule = null;
+    if (useLocalDb) {
+      const schedules = readSchedules();
+      schedule = schedules.find(s => s.jobId === appJobId);
+    } else {
+      schedule = await InterviewSchedule.findOne({ jobId: appJobId });
+    }
+
+    if (!schedule) {
+      return res.status(400).json({
+        message: "Please schedule an interview for this job first in the 'Interview Schedule' page before sending the invite email."
+      });
+    }
+
+    // Build Premium HTML Email template
+    const emailSubject = `Interview Invitation: ${schedule.jobTitle} - SmartHire AI`;
+    const emailHtml = `
+      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+        <!-- Header -->
+        <div style="text-align: center; margin-bottom: 30px; border-bottom: 2px solid #e0e7ff; padding-bottom: 20px;">
+          <h2 style="color: #4f46e5; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">SmartHire AI</h2>
+          <span style="font-size: 12px; font-weight: bold; color: #6366f1; text-transform: uppercase; tracking-wider: 1px;">Interview Confirmation</span>
+        </div>
+
+        <!-- Body -->
+        <p style="font-size: 16px; line-height: 1.6; color: #334155; margin-bottom: 20px;">
+          Hello <strong>${candidateName}</strong>,
+        </p>
+        <p style="font-size: 16px; line-height: 1.6; color: #334155; margin-bottom: 24px;">
+          We are pleased to invite you for an interview regarding your application for the <strong>${schedule.jobTitle}</strong> position. Here are your schedule details:
+        </p>
+
+        <!-- Details Card -->
+        <div style="background-color: #f8fafc; border: 1px solid #f1f5f9; border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 6px 0; font-size: 14px; font-weight: bold; color: #64748b; width: 100px; vertical-align: top;">Date</td>
+              <td style="padding: 6px 0; font-size: 14px; font-weight: bold; color: #0f172a; vertical-align: top;">
+                ${new Date(schedule.date).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; font-size: 14px; font-weight: bold; color: #64748b; vertical-align: top;">Time</td>
+              <td style="padding: 6px 0; font-size: 14px; font-weight: bold; color: #0f172a; vertical-align: top;">
+                ${schedule.time}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; font-size: 14px; font-weight: bold; color: #64748b; vertical-align: top;">Location</td>
+              <td style="padding: 6px 0; font-size: 14px; color: #4f46e5; font-weight: bold; vertical-align: top;">
+                <a href="${schedule.location}" style="color: #4f46e5; text-decoration: none; border-bottom: 1px dashed #4f46e5;">${schedule.location}</a>
+              </td>
+            </tr>
+          </table>
+        </div>
+
+        ${schedule.notes ? `
+        <!-- Notes Section -->
+        <div style="margin-bottom: 25px;">
+          <h4 style="margin: 0 0 8px 0; font-size: 14px; text-transform: uppercase; color: #475569; letter-spacing: 0.5px;">Instructions & Notes</h4>
+          <div style="font-size: 14px; line-height: 1.6; color: #475569; background-color: #fafafa; border-left: 4px solid #818cf8; padding: 12px 16px; border-radius: 4px;">
+            ${schedule.notes.replace(/\n/g, '<br/>')}
+          </div>
+        </div>
+        ` : ''}
+
+        <!-- Closing -->
+        <p style="font-size: 15px; line-height: 1.6; color: #475569; margin-top: 30px; border-top: 1px solid #f1f5f9; padding-top: 20px;">
+          Please join the session on time. If you have any questions or need to reschedule, reply directly to this email.
+        </p>
+        <p style="font-size: 15px; line-height: 1.6; color: #475569; margin-bottom: 0;">
+          Best regards,<br/>
+          <strong>SmartHire Recruitment Team</strong>
+        </p>
+      </div>
+    `;
+
+    // 6. Attempt Email Dispatch
+    let warning = null;
+    const fromAddress = process.env.SMTP_FROM || "onboarding@resend.dev";
+    
+    try {
+      const mailOptions = {
+        from: `"SmartHire AI Recruiters" <${fromAddress}>`,
+        to: candidateEmail,
+        subject: emailSubject,
+        html: emailHtml,
+      };
+      
+      console.log(`[SMTP] Attempting to send interview email to candidate: ${candidateName} <${candidateEmail}>`);
+      await transporter.sendMail(mailOptions);
+      console.log(`[SMTP] Email successfully dispatched to candidate: ${candidateEmail}`);
+    } catch (smtpError) {
+      console.warn(`\n⚠️ Resend SMTP sandbox restriction triggered! Details: ${smtpError.message}`);
+      console.warn(`--------------------------------------------------------------------------------`);
+      console.warn(`SIMULATING EMAIL DISPATCH IN SERVER LOGS:`);
+      console.warn(`TO: ${candidateName} <${candidateEmail}>`);
+      console.warn(`FROM: SmartHire AI Recruiters <${fromAddress}>`);
+      console.warn(`SUBJECT: ${emailSubject}`);
+      console.warn(`HTML BODY:`);
+      console.warn(emailHtml.replace(/<[^>]*>/g, '').trim().substring(0, 1000) + "\n...[truncated HTML visualization in logs]...");
+      console.warn(`--------------------------------------------------------------------------------\n`);
+      
+      warning = `Resend Sandbox Mode: Direct email delivery to external candidate (${candidateEmail}) was blocked. The complete invitation email template has been printed to the server terminal console!`;
+    }
+
+    res.json({ ...appObj, warning });
   } catch (error) {
     console.error("Send email error:", error);
     res.status(500).json({ message: error.message || "Server error sending email" });
+  }
+});
+
+// GET endpoint to reset email flags for easy dev testing
+app.get("/api/test/reset-emails", async (req, res) => {
+  try {
+    if (useLocalDb) {
+      const applications = readApplications();
+      applications.forEach(a => a.emailSent = false);
+      writeApplications(applications);
+    } else {
+      await Application.updateMany({}, { $set: { emailSent: false } });
+    }
+    res.send(`
+      <div style="font-family: sans-serif; text-align: center; padding: 50px;">
+        <h2 style="color: #10b981;">Reset Successful!</h2>
+        <p style="color: #4b5563; font-size: 16px;">All candidate emailSent flags have been reset to <strong>false</strong>.</p>
+        <p style="color: #6b7280; font-size: 14px;">You can now go back to your HR dashboard and click the send buttons again.</p>
+      </div>
+    `);
+  } catch (error) {
+    res.status(500).send("Error resetting email flags: " + error.message);
   }
 });
 
