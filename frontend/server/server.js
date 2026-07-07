@@ -9,7 +9,6 @@ import Job from "./models/Job.js";
 import Application from "./models/Application.js";
 import InterviewSchedule from "./models/InterviewSchedule.js";
 import fs from "fs";
-import nodemailer from "nodemailer";
 import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
@@ -19,15 +18,58 @@ import { spawn } from "child_process";
 
 dotenv.config();
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp.resend.com",
-  port: parseInt(process.env.SMTP_PORT || "465", 10),
-  secure: process.env.SMTP_PORT === "465",
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+function sendEmailJSEmail(templateParams) {
+  const serviceId = process.env.EMAILJS_SERVICE_ID;
+  const templateId = process.env.EMAILJS_TEMPLATE_ID;
+  const publicKey = process.env.EMAILJS_PUBLIC_KEY;
+  const privateKey = process.env.EMAILJS_PRIVATE_KEY;
+
+  if (!serviceId || serviceId === "your_service_id" || !templateId || templateId === "your_template_id" || !publicKey || publicKey === "your_public_key") {
+    return Promise.reject(new Error("EmailJS is not fully configured in your .env file. Please check your credentials."));
+  }
+
+  const payload = JSON.stringify({
+    service_id: serviceId,
+    template_id: templateId,
+    user_id: publicKey,
+    accessToken: privateKey,
+    template_params: templateParams
+  });
+
+  const options = {
+    hostname: "api.emailjs.com",
+    port: 443,
+    path: "/api/v1.0/email/send",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(payload)
+    }
+  };
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      let responseBody = "";
+      res.on("data", (chunk) => {
+        responseBody += chunk;
+      });
+      res.on("end", () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(responseBody);
+        } else {
+          reject(new Error(`EmailJS responded with status ${res.statusCode}: ${responseBody}`));
+        }
+      });
+    });
+
+    req.on("error", (err) => {
+      reject(err);
+    });
+
+    req.write(payload);
+    req.end();
+  });
+}
 
 const app = express();
 app.use(cors());
@@ -1356,96 +1398,35 @@ app.post("/api/applications/:id/send-email", authMiddleware, async (req, res) =>
       });
     }
 
-    // Build Premium HTML Email template
-    const emailSubject = `Interview Invitation: ${schedule.jobTitle} - SmartHire AI`;
-    const emailHtml = `
-      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-        <!-- Header -->
-        <div style="text-align: center; margin-bottom: 30px; border-bottom: 2px solid #e0e7ff; padding-bottom: 20px;">
-          <h2 style="color: #4f46e5; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">SmartHire AI</h2>
-          <span style="font-size: 12px; font-weight: bold; color: #6366f1; text-transform: uppercase; tracking-wider: 1px;">Interview Confirmation</span>
-        </div>
-
-        <!-- Body -->
-        <p style="font-size: 16px; line-height: 1.6; color: #334155; margin-bottom: 20px;">
-          Hello <strong>${candidateName}</strong>,
-        </p>
-        <p style="font-size: 16px; line-height: 1.6; color: #334155; margin-bottom: 24px;">
-          We are pleased to invite you for an interview regarding your application for the <strong>${schedule.jobTitle}</strong> position. Here are your schedule details:
-        </p>
-
-        <!-- Details Card -->
-        <div style="background-color: #f8fafc; border: 1px solid #f1f5f9; border-radius: 12px; padding: 20px; margin-bottom: 25px;">
-          <table style="width: 100%; border-collapse: collapse;">
-            <tr>
-              <td style="padding: 6px 0; font-size: 14px; font-weight: bold; color: #64748b; width: 100px; vertical-align: top;">Date</td>
-              <td style="padding: 6px 0; font-size: 14px; font-weight: bold; color: #0f172a; vertical-align: top;">
-                ${new Date(schedule.date).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-              </td>
-            </tr>
-            <tr>
-              <td style="padding: 6px 0; font-size: 14px; font-weight: bold; color: #64748b; vertical-align: top;">Time</td>
-              <td style="padding: 6px 0; font-size: 14px; font-weight: bold; color: #0f172a; vertical-align: top;">
-                ${schedule.time}
-              </td>
-            </tr>
-            <tr>
-              <td style="padding: 6px 0; font-size: 14px; font-weight: bold; color: #64748b; vertical-align: top;">Location</td>
-              <td style="padding: 6px 0; font-size: 14px; color: #4f46e5; font-weight: bold; vertical-align: top;">
-                <a href="${schedule.location}" style="color: #4f46e5; text-decoration: none; border-bottom: 1px dashed #4f46e5;">${schedule.location}</a>
-              </td>
-            </tr>
-          </table>
-        </div>
-
-        ${schedule.notes ? `
-        <!-- Notes Section -->
-        <div style="margin-bottom: 25px;">
-          <h4 style="margin: 0 0 8px 0; font-size: 14px; text-transform: uppercase; color: #475569; letter-spacing: 0.5px;">Instructions & Notes</h4>
-          <div style="font-size: 14px; line-height: 1.6; color: #475569; background-color: #fafafa; border-left: 4px solid #818cf8; padding: 12px 16px; border-radius: 4px;">
-            ${schedule.notes.replace(/\n/g, '<br/>')}
-          </div>
-        </div>
-        ` : ''}
-
-        <!-- Closing -->
-        <p style="font-size: 15px; line-height: 1.6; color: #475569; margin-top: 30px; border-top: 1px solid #f1f5f9; padding-top: 20px;">
-          Please join the session on time. If you have any questions or need to reschedule, reply directly to this email.
-        </p>
-        <p style="font-size: 15px; line-height: 1.6; color: #475569; margin-bottom: 0;">
-          Best regards,<br/>
-          <strong>SmartHire Recruitment Team</strong>
-        </p>
-      </div>
-    `;
-
-    // 6. Attempt Email Dispatch
+    // 6. Attempt Email Dispatch via EmailJS API
     let warning = null;
-    const fromAddress = process.env.SMTP_FROM || "onboarding@resend.dev";
     
     try {
-      const mailOptions = {
-        from: `"SmartHire AI Recruiters" <${fromAddress}>`,
-        to: candidateEmail,
-        subject: emailSubject,
-        html: emailHtml,
+      const templateParams = {
+        candidate_name: candidateName,
+        candidate_email: candidateEmail,
+        job_title: schedule.jobTitle,
+        interview_date: new Date(schedule.date).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
+        interview_time: schedule.time,
+        interview_location: schedule.location,
+        interview_notes: schedule.notes || ""
       };
       
-      console.log(`[SMTP] Attempting to send interview email to candidate: ${candidateName} <${candidateEmail}>`);
-      await transporter.sendMail(mailOptions);
-      console.log(`[SMTP] Email successfully dispatched to candidate: ${candidateEmail}`);
-    } catch (smtpError) {
-      console.warn(`\n⚠️ Resend SMTP sandbox restriction triggered! Details: ${smtpError.message}`);
+      console.log(`[EmailJS] Attempting to send interview email to candidate: ${candidateName} <${candidateEmail}>`);
+      await sendEmailJSEmail(templateParams);
+      console.log(`[EmailJS] Email successfully dispatched to candidate: ${candidateEmail}`);
+    } catch (emailjsError) {
+      console.warn(`\n⚠️ EmailJS API request failed! Details: ${emailjsError.message}`);
       console.warn(`--------------------------------------------------------------------------------`);
-      console.warn(`SIMULATING EMAIL DISPATCH IN SERVER LOGS:`);
+      console.warn(`SIMULATING EMAIL DISPATCH IN SERVER LOGS (FALLBACK):`);
       console.warn(`TO: ${candidateName} <${candidateEmail}>`);
-      console.warn(`FROM: SmartHire AI Recruiters <${fromAddress}>`);
-      console.warn(`SUBJECT: ${emailSubject}`);
-      console.warn(`HTML BODY:`);
-      console.warn(emailHtml.replace(/<[^>]*>/g, '').trim().substring(0, 1000) + "\n...[truncated HTML visualization in logs]...");
+      console.warn(`SUBJECT: Interview Invitation: ${schedule.jobTitle} - SmartHire AI`);
+      console.warn(`DATE: ${schedule.date} | TIME: ${schedule.time}`);
+      console.warn(`LOCATION: ${schedule.location}`);
+      console.warn(`NOTES: ${schedule.notes || "(None)"}`);
       console.warn(`--------------------------------------------------------------------------------\n`);
       
-      warning = `Resend Sandbox Mode: Direct email delivery to external candidate (${candidateEmail}) was blocked. The complete invitation email template has been printed to the server terminal console!`;
+      warning = `EmailJS Integration Warning: Email delivery simulated. Reason: ${emailjsError.message}. The complete details have been logged to the server terminal console!`;
     }
 
     res.json({ ...appObj, warning });
